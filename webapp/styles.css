@@ -325,6 +325,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 }
 .drawer-table td { padding: 8px 10px; border-top: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 10%, transparent); vertical-align: top; word-break: break-word; }
 .drawer-table td.num { font-family: var(--mono); white-space: nowrap; }
+.drawer-table td:first-child, .drawer-table th:first-child { white-space: nowrap; }
 .drawer-table .dt-status { width: 36px; text-align: center; }
 
 /* Array (waveform / multi-point) measurement preview + dialog */
