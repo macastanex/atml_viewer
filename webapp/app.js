@@ -366,6 +366,11 @@ function renderAtml(doc, container) {
   countStats(nodes, stats);
   state.currentFilterMode = 'all';
 
+  // Flex-column wrapper so the steps table fills the remaining vertical space.
+  const root = el('div', { class: 'atml-result' });
+  container.appendChild(root);
+  container = root;
+
   // ----- result header (SystemLink-style metadata bar) -----
   const header = el('div', { class: 'result-header' });
 
@@ -806,7 +811,14 @@ function setupResizableColumns(table) {
     const total = (table.parentElement && table.parentElement.clientWidth) || 900;
     const fixed = specs.reduce((s, sp) => s + (sp.px || 0), 0);
     const flexTotal = Math.max(0, total - fixed);
-    return specs.map((sp) => sp.px != null ? sp.px : Math.max(60, Math.round(flexTotal * sp.flex)));
+    const w = specs.map((sp) => sp.px != null ? sp.px : Math.max(60, Math.round(flexTotal * sp.flex)));
+    // Absorb rounding into the last flexible column so the table exactly fills
+    // the container width (avoids a stray 1-2px horizontal scrollbar).
+    const diff = total - w.reduce((a, b) => a + b, 0);
+    if (diff !== 0) {
+      for (let i = specs.length - 1; i >= 0; i--) { if (specs[i].px == null) { w[i] = Math.max(60, w[i] + diff); break; } }
+    }
+    return w;
   }
   function apply() {
     colEls.forEach((c, i) => { c.style.width = widths[i] + 'px'; });

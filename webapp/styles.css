@@ -215,7 +215,8 @@ body {
 .summary-card-btn.active { border-color: color-mix(in srgb, var(--ni-nimble-body-font-color) 35%, transparent); background: var(--surface-2); }
 
 /* steps grid */
-.steps-table-wrap { overflow-x: auto; }
+.atml-result { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.steps-table-wrap { flex: 1; min-height: 0; overflow: auto; }
 .steps-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 .steps-table thead th {
   position: sticky; top: 0; z-index: 1;
