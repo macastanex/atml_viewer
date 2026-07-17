@@ -11,11 +11,15 @@ const FILE_API = '/nifile/v1';
 const SERVER_PAGE = 1000;   // files fetched per server request (API max)
 
 const state = {
-  files: [],            // current file results shown in the list
+  files: [],            // filtered + sorted files shown in the table
+  allFiles: [],         // raw files from the last fetch
   loading: false,
+  view: 'search',       // 'search' | 'viewer'
   selectedId: null,
   search: '',
   workspace: '',
+  dateFilter: '',       // lookback window in ms ('' = any time)
+  sort: { key: 'created', dir: 'desc' },
   workspaceNames: {},   // id -> name
   currentFile: null,    // metadata of the file currently open
   currentDoc: null,     // parsed XML Document
@@ -92,13 +96,50 @@ async function loadFiles() {
     } else {
       files = await elasticXmlSearch(state.search);
     }
-    state.files = files;
-    renderFileList();
+    state.allFiles = files;
+    applyAndRender();
   } catch (e) {
     setFileStatus(e.message, true);
   } finally {
     state.loading = false;
   }
+}
+
+// Apply the client-side creation-date filter and current sort, then render.
+function applyAndRender() {
+  let files = state.allFiles.slice();
+  const ms = Number(state.dateFilter);
+  if (ms > 0) {
+    const cutoff = Date.now() - ms;
+    files = files.filter((f) => {
+      const t = new Date(f.created || f.updated).getTime();
+      return !isNaN(t) && t >= cutoff;
+    });
+  }
+  files.sort(fileComparator(state.sort));
+  state.files = files;
+  renderFileTable();
+}
+
+function fileComparator(sort) {
+  const { key, dir } = sort;
+  const mul = dir === 'asc' ? 1 : -1;
+  const val = (f) => {
+    switch (key) {
+      case 'name': return fileName(f).toLowerCase();
+      case 'ext': return fileExt(f);
+      case 'size': return Number(f.size ?? f.size64 ?? 0);
+      case 'workspace': return (state.workspaceNames[f.workspace] || '').toLowerCase();
+      case 'created':
+      default: return new Date(f.created || f.updated).getTime() || 0;
+    }
+  };
+  return (a, b) => {
+    const va = val(a); const vb = val(b);
+    if (va < vb) return -1 * mul;
+    if (va > vb) return 1 * mul;
+    return 0;
+  };
 }
 
 // Global XML search/browse via Elasticsearch (all workspaces), newest first.
@@ -149,40 +190,57 @@ function onSearchInput(value) {
   searchTimer = setTimeout(() => loadFiles(), 300);
 }
 
-function renderFileList() {
-  const ul = $('#file-list');
-  ul.innerHTML = '';
+function setSortColumn(key) {
+  if (state.sort.key === key) {
+    state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    state.sort.key = key;
+    state.sort.dir = key === 'name' || key === 'ext' || key === 'workspace' ? 'asc' : 'desc';
+  }
+  updateSortIndicators();
+  applyAndRender();
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('#file-table th.sortable').forEach((th) => {
+    const active = th.dataset.sort === state.sort.key;
+    th.classList.toggle('sorted', active);
+    th.setAttribute('aria-sort', active ? (state.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+    let ind = th.querySelector('.sort-ind');
+    if (!ind) { ind = el('span', { class: 'sort-ind' }); th.appendChild(ind); }
+    ind.textContent = active ? (state.sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  });
+}
+
+function renderFileTable() {
+  const tbody = $('#file-tbody');
+  tbody.innerHTML = '';
   const files = state.files || [];
+  const empty = $('#file-empty');
   if (files.length === 0) {
     setFileStatus(state.search ? 'No XML files match your search.' : 'No XML files found.');
+    if (empty) empty.hidden = false;
   } else {
     const n = files.length;
     setFileStatus(`${n} file${n === 1 ? '' : 's'}`);
+    if (empty) empty.hidden = true;
   }
 
   for (const f of files) {
-    const ext = fileExt(f);
-    const li = el('li', { class: 'file-item' + (f.id === state.selectedId ? ' selected' : '') });
-    li.setAttribute('role', 'option');
-    li.tabIndex = 0;
-    const name = el('div', { class: 'fi-name' });
-    name.appendChild(el('span', { class: 'file-ext' + (ext === 'xml' ? ' xml' : ''), text: ext || 'file' }));
-    name.appendChild(el('span', { text: fileName(f) }));
-    const meta = el('div', {
-      class: 'fi-meta',
-      text: `${formatSize(f.size ?? f.size64)} · ${formatDate(f.updated || f.created)}${wsLabel(f.workspace)}`,
-    });
-    li.appendChild(name);
-    li.appendChild(meta);
-    li.addEventListener('click', () => selectFile(f));
-    li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectFile(f); } });
-    ul.appendChild(li);
+    const tr = el('tr', { class: 'file-row' + (f.id === state.selectedId ? ' selected' : '') });
+    tr.tabIndex = 0;
+    const nameTd = el('td', { class: 'ft-name' });
+    nameTd.appendChild(el('span', { class: 'file-ext xml', text: fileExt(f) || 'file' }));
+    nameTd.appendChild(el('span', { class: 'ft-name-text', text: fileName(f), attrs: { title: fileName(f) } }));
+    tr.appendChild(nameTd);
+    tr.appendChild(el('td', { text: fileExt(f) || '—' }));
+    tr.appendChild(el('td', { text: formatDate(f.created || f.updated) }));
+    tr.appendChild(el('td', { class: 'ft-num', text: formatSize(f.size ?? f.size64) }));
+    tr.appendChild(el('td', { text: state.workspaceNames[f.workspace] || '—' }));
+    tr.addEventListener('click', () => selectFile(f));
+    tr.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectFile(f); } });
+    tbody.appendChild(tr);
   }
-}
-
-function wsLabel(id) {
-  const n = state.workspaceNames[id];
-  return n ? ` · ${n}` : '';
 }
 function setFileStatus(msg, isError) {
   const s = $('#file-status');
@@ -206,10 +264,8 @@ function formatDate(iso) {
 /* ---------- Load & render a file ---------- */
 async function selectFile(f) {
   state.selectedId = f.id;
-  renderFileList();
-  setSidebarCollapsed(true);
+  showViewerPage();
   showLoading(true);
-  $('#empty-state').hidden = true;
   try {
     const res = await apiGet(`${FILE_API}/service-groups/Default/files/${encodeURIComponent(f.id)}/data`, {
       headers: {},
@@ -221,6 +277,19 @@ async function selectFile(f) {
   } finally {
     showLoading(false);
   }
+}
+
+/* ---------- Page navigation ---------- */
+function showSearchPage() {
+  state.view = 'search';
+  $('#search-page').hidden = false;
+  $('#viewer-page').hidden = true;
+}
+function showViewerPage() {
+  state.view = 'viewer';
+  $('#search-page').hidden = true;
+  $('#viewer-page').hidden = false;
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
 
 function openXml(text, name, id, file) {
@@ -271,7 +340,7 @@ function setFormatBadge(label, isAtml) {
 }
 
 function showViewerError(name, msg) {
-  $('#empty-state').hidden = true;
+  showViewerPage();
   $('#viewer').hidden = false;
   $('#viewer-filename').textContent = name;
   setFormatBadge('Error', false);
@@ -1382,20 +1451,127 @@ function initTheme() {
   });
 }
 
-/* ---------- Wire up ---------- */
-/* ---------- Sidebar collapse ---------- */
-function setSidebarCollapsed(collapsed) {
-  const layout = $('.layout');
-  if (!layout) return;
-  layout.classList.toggle('sidebar-collapsed', collapsed);
-  const btn = $('#sidebar-toggle');
-  if (btn) btn.title = collapsed ? 'Show file list' : 'Hide file list';
-  // The available width changed, so re-fit the steps table columns.
-  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+/* ---------- File upload slide-out ---------- */
+const uploadQueue = [];   // [{ file, state: 'ready'|'uploading'|'done'|'error', id, error }]
+
+function openUploadDrawer() {
+  $('#upload-drawer').classList.add('open');
+  $('#upload-backdrop').classList.add('open');
 }
-function toggleSidebar() {
-  const layout = $('.layout');
-  setSidebarCollapsed(!(layout && layout.classList.contains('sidebar-collapsed')));
+function closeUploadDrawer() {
+  $('#upload-drawer').classList.remove('open');
+  $('#upload-backdrop').classList.remove('open');
+}
+
+function isXmlFile(file) {
+  return /\.xml$/i.test(file.name) || file.type === 'text/xml' || file.type === 'application/xml';
+}
+
+function addUploadFiles(fileList) {
+  let added = 0;
+  for (const file of Array.from(fileList)) {
+    if (!isXmlFile(file)) continue;
+    if (uploadQueue.some((q) => q.file.name === file.name && q.file.size === file.size)) continue;
+    uploadQueue.push({ file, state: 'ready', id: null, error: null });
+    added++;
+  }
+  renderUploadRows();
+  return added;
+}
+
+function renderUploadRows() {
+  const tbody = $('#upload-rows');
+  tbody.innerHTML = '';
+  const wsId = $('#upload-workspace').value;
+  const wsName = state.workspaceNames[wsId] || 'Default';
+  for (const q of uploadQueue) {
+    const tr = el('tr');
+    tr.appendChild(el('td', { class: 'ul-name', text: q.file.name, attrs: { title: q.file.name } }));
+    tr.appendChild(el('td', { text: wsName }));
+    tr.appendChild(el('td', { class: 'ft-num', text: formatSize(q.file.size) }));
+    const stateTd = el('td', { class: 'ul-state ' + q.state });
+    stateTd.textContent = q.state === 'ready' ? 'Ready'
+      : q.state === 'uploading' ? 'Uploading…'
+        : q.state === 'done' ? 'Uploaded'
+          : (q.error || 'Failed');
+    tr.appendChild(stateTd);
+    tbody.appendChild(tr);
+  }
+  const pending = uploadQueue.filter((q) => q.state === 'ready').length;
+  $('#upload-ok').disabled = pending === 0;
+}
+
+async function uploadFileToService(file, workspaceId) {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  let url = `${FILE_API}/service-groups/Default/upload-files`;
+  if (workspaceId) url += `?workspace=${encodeURIComponent(workspaceId)}`;
+  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', body: form });
+  if (!res.ok) {
+    const msg = res.status === 401 || res.status === 403
+      ? 'Not authorized to upload to this workspace.'
+      : `Upload failed (${res.status} ${res.statusText}).`;
+    throw new Error(msg);
+  }
+  const data = await res.json().catch(() => ({}));
+  const uri = data.uri || '';
+  const id = uri.split('/').filter(Boolean).pop();
+  return id;
+}
+
+async function runUpload() {
+  const wsId = $('#upload-workspace').value;
+  $('#upload-ok').disabled = true;
+  let lastSuccess = null;
+  for (const q of uploadQueue) {
+    if (q.state === 'done') continue;
+    q.state = 'uploading';
+    renderUploadRows();
+    try {
+      q.id = await uploadFileToService(q.file, wsId);
+      q.state = 'done';
+      lastSuccess = q;
+    } catch (e) {
+      q.state = 'error';
+      q.error = e.message;
+    }
+    renderUploadRows();
+  }
+
+  // If exactly one file was uploaded successfully, open it in the viewer.
+  const succeeded = uploadQueue.filter((q) => q.state === 'done');
+  if (succeeded.length === 1 && lastSuccess) {
+    const text = await lastSuccess.file.text();
+    const meta = { id: lastSuccess.id, workspace: wsId, created: new Date().toISOString(), size: lastSuccess.file.size, properties: { Name: lastSuccess.file.name } };
+    closeUploadDrawer();
+    state.selectedId = lastSuccess.id;
+    showViewerPage();
+    openXml(text, lastSuccess.file.name, lastSuccess.id, meta);
+    uploadQueue.length = 0;
+    renderUploadRows();
+    loadFiles();
+  } else if (succeeded.length > 0) {
+    // Multiple uploads: refresh the search list and let the user pick.
+    loadFiles();
+    $('#upload-ok').disabled = false;
+  }
+}
+
+function wireUploadDrawer() {
+  $('#nav-import').addEventListener('click', openUploadDrawer);
+  $('#upload-close').addEventListener('click', closeUploadDrawer);
+  $('#upload-backdrop').addEventListener('click', closeUploadDrawer);
+  $('#upload-ok').addEventListener('click', () => runUpload());
+  $('#upload-workspace').addEventListener('change', renderUploadRows);
+
+  const input = $('#file-input');
+  $('#dz-browse').addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { addUploadFiles(input.files); input.value = ''; });
+
+  const dz = $('#dropzone');
+  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); if (ev !== 'dragleave' || e.target === dz) dz.classList.remove('dragover'); }));
+  dz.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files) addUploadFiles(e.dataTransfer.files); });
 }
 
 function init() {
@@ -1403,8 +1579,16 @@ function init() {
   $('#file-search').addEventListener('input', (e) => onSearchInput(e.target.value));
   disableSuggestions($('#file-search'));
   $('#refresh-btn').addEventListener('click', () => loadFiles());
-  $('#sidebar-toggle').addEventListener('click', toggleSidebar);
   $('#workspace-select').addEventListener('change', (e) => { state.workspace = e.target.value; loadFiles(); });
+  $('#date-filter').addEventListener('change', (e) => { state.dateFilter = e.target.value; applyAndRender(); });
+
+  $('#nav-search').addEventListener('click', showSearchPage);
+  $('#back-to-files').addEventListener('click', showSearchPage);
+
+  document.querySelectorAll('#file-table th.sortable').forEach((th) => {
+    th.addEventListener('click', () => setSortColumn(th.dataset.sort));
+  });
+  updateSortIndicators();
 
   $('#view-rendered').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('rendered'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
   $('#view-raw').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('raw'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
@@ -1414,13 +1598,23 @@ function init() {
   $('#dtab-info').addEventListener('click', () => setDrawerTab('info'));
   $('#dtab-data').addEventListener('click', () => setDrawerTab('data'));
   $('#img-lightbox').addEventListener('click', closeImageLightbox);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImageLightbox(); closeStepDetails(); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImageLightbox(); closeStepDetails(); closeUploadDrawer(); } });
+
+  wireUploadDrawer();
 
   fetchWorkspaces().then((list) => {
+    const sorted = list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const sel = $('#workspace-select');
-    for (const w of list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+    const upSel = $('#upload-workspace');
+    for (const w of sorted) {
       sel.appendChild(el('nimble-list-option', { text: w.name || w.id, attrs: { value: w.id } }));
+      const opt = el('nimble-list-option', { text: w.name || w.id, attrs: { value: w.id } });
+      upSel.appendChild(opt);
     }
+    // Default the upload workspace to the first available workspace.
+    if (sorted.length && upSel.value === '') upSel.value = sorted[0].id;
+    renderUploadRows();
+    applyAndRender();
   });
 
   loadFiles();
