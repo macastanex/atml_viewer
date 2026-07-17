@@ -540,6 +540,7 @@ function buildStepTree(parent) {
       time: stepTime(child),
       children: buildStepTree(child),
       measurements: extractMeasurements(child),
+      params: extractParameters(child),
       data: extractData(child),
     };
     out.push(node);
@@ -576,6 +577,27 @@ function extractMeasurements(node) {
     out.push({ name, value, unit, type, limits });
   }
   return out;
+}
+
+// Parse <tr:Parameters>/<tr:Parameter> into step inputs and outputs.
+function extractParameters(node) {
+  const inputs = [];
+  const outputs = [];
+  const params = firstChildByLocal(node, 'Parameters');
+  if (!params) return { inputs, outputs };
+  for (const p of childrenByLocal(params, 'Parameter')) {
+    const name = attr(p, 'name') || 'Parameter';
+    const dataEl = firstChildByLocal(p, 'Data');
+    const datum = dataEl ? firstChildByLocal(dataEl, 'Datum') : null;
+    const value = datum ? datumValue(datum) : (attr(p, 'value') || '');
+    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '') : '';
+    const dir = (attr(p, 'direction') || '').toLowerCase();
+    const item = { name, value, unit };
+    if (dir.startsWith('out')) outputs.push(item);
+    else if (dir === 'inout' || dir === 'in-out') { inputs.push(item); outputs.push(item); }
+    else inputs.push(item);
+  }
+  return { inputs, outputs };
 }
 
 function datumXsiType(datum) {
@@ -1096,8 +1118,11 @@ function openStepDetails(node) {
   const info = $('#drawer-info');
   info.innerHTML = '';
   info.appendChild(drawerSection('Measurements', renderMeasurementsTable(node)));
-  info.appendChild(drawerSection('Inputs', el('div', { class: 'drawer-empty', text: 'No inputs' })));
-  info.appendChild(drawerSection('Outputs', el('div', { class: 'drawer-empty', text: 'No outputs' })));
+  const params = node.params || { inputs: [], outputs: [] };
+  info.appendChild(drawerSection('Inputs', params.inputs.length
+    ? renderParamsTable(params.inputs) : el('div', { class: 'drawer-empty', text: 'No inputs' })));
+  info.appendChild(drawerSection('Outputs', params.outputs.length
+    ? renderParamsTable(params.outputs) : el('div', { class: 'drawer-empty', text: 'No outputs' })));
   info.appendChild(drawerSection('Properties', renderPropertiesTable(node)));
 
   const data = $('#drawer-data');
@@ -1151,7 +1176,7 @@ function renderMeasurementsTable(node) {
   for (const m of meas) {
     const lim = m.limits || {};
     const tr = el('tr');
-    tr.appendChild(el('td', { text: m.name || '' }));
+    tr.appendChild(el('td', { text: displayMeasName(m.name, node.name) }));
     const valTd = el('td', { class: 'num' });
     renderValueInto(valTd, m.value);
     tr.appendChild(valTd);
@@ -1162,6 +1187,27 @@ function renderMeasurementsTable(node) {
     const st = el('td', { class: 'dt-status' });
     st.appendChild(statusIcon(node.outcome));
     tr.appendChild(st);
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  return table;
+}
+function renderParamsTable(items) {
+  const hasUnit = items.some((i) => i.unit);
+  const table = el('table', { class: 'drawer-table' });
+  const thead = el('thead');
+  thead.innerHTML = hasUnit
+    ? '<tr><th>Name</th><th>Value</th><th>Unit</th></tr>'
+    : '<tr><th>Name</th><th>Value</th></tr>';
+  table.appendChild(thead);
+  const tb = el('tbody');
+  for (const it of items) {
+    const tr = el('tr');
+    tr.appendChild(el('td', { text: it.name || '' }));
+    const valTd = el('td', { class: 'num' });
+    renderValueInto(valTd, it.value);
+    tr.appendChild(valTd);
+    if (hasUnit) tr.appendChild(el('td', { text: it.unit || '' }));
     tb.appendChild(tr);
   }
   table.appendChild(tb);
