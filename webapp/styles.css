@@ -222,6 +222,9 @@ body {
 }
 .st-row:hover { background: var(--surface-2); }
 .st-cell { padding: 7px 12px; vertical-align: top; }
+/* Give the remaining table width to the Steps (name) column. */
+.steps-table thead th:first-child,
+.st-name-cell { width: 100%; }
 .st-name-cell { white-space: nowrap; }
 .st-name-cell.clickable { cursor: pointer; }
 .st-chev {
