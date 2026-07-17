@@ -570,13 +570,28 @@ function extractMeasurements(node) {
     const name = attr(r, 'name') || 'Measurement';
     const dataEl = firstChildByLocal(r, 'TestData');
     const datum = dataEl ? firstChildByLocal(dataEl, 'Datum') : null;
+    const arrEl = dataEl ? firstChildByLocal(dataEl, 'IndexedArray') : null;
+    const array = arrEl ? parseIndexedArray(arrEl) : null;
     const value = datum ? datumValue(datum) : '';
-    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '') : '';
-    const type = datum ? shortType(attr(datum, 'type') || datumXsiType(datum)) : '';
+    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '')
+      : (arrEl ? (attr(arrEl, 'nonStandardUnit') || attr(arrEl, 'unit') || '') : '');
+    const type = datum ? shortType(attr(datum, 'type') || datumXsiType(datum))
+      : (arrEl ? shortType(attr(arrEl, 'type')) : '');
     const limits = extractLimits(r);
-    out.push({ name, value, unit, type, limits });
+    out.push({ name, value, unit, type, limits, array });
   }
   return out;
+}
+
+// Parse <c:IndexedArray> (TestStand waveform / multi-point arrays) into a
+// dimensions descriptor plus a flat list of positioned values.
+function parseIndexedArray(arrEl) {
+  const dimsMatch = (attr(arrEl, 'dimensions') || '').match(/\d+/g);
+  const points = childrenByLocal(arrEl, 'Element').map((e) => ({
+    pos: ((attr(e, 'position') || '').match(/-?\d+/g) || []).map(Number),
+    value: attr(e, 'value') != null ? attr(e, 'value') : textOf(e),
+  }));
+  return { dims: dimsMatch ? dimsMatch.map(Number) : [points.length], points };
 }
 
 // Parse <tr:Parameters>/<tr:Parameter> into step inputs and outputs.
@@ -743,7 +758,7 @@ function renderStepsRow(row, onToggle) {
   if (m) {
     const stepName = row.kind === 'step' ? row.name : row.stepName;
     mname.textContent = row.kind === 'data' ? (m.name || '') : displayMeasName(m.name, stepName);
-    renderValueInto(mval, m.value);
+    renderMeasValue(mval, m);
     munit.textContent = m.unit || '';
     if (m.limits && m.limits.text) {
       mval.classList.add('has-limits');
@@ -828,8 +843,90 @@ function setupResizableColumns(table) {
   _colResizeCleanup = () => window.removeEventListener('resize', onResize);
 }
 
+// Render a measurement value: array measurements show a clickable preview that
+// opens a dialog with the full data set; everything else uses renderValueInto.
+function renderMeasValue(td, m) {
+  if (m && m.array && m.array.points && m.array.points.length) {
+    renderArrayPreview(td, m.array, m.name);
+  } else {
+    renderValueInto(td, m ? m.value : '');
+  }
+}
+
+function renderArrayPreview(td, array, name) {
+  const shape = (array.dims && array.dims.length) ? array.dims.join(' × ') : String(array.points.length);
+  const preview = array.points.slice(0, 5).map((p) => p.value).join(', ');
+  const more = array.points.length > 5 ? ', …' : '';
+  const link = el('button', {
+    class: 'array-link', attrs: { type: 'button', title: 'View full array' },
+    text: `[${preview}${more}] (${shape})`,
+  });
+  link.addEventListener('click', (e) => { e.stopPropagation(); openArrayDialog(array, name); });
+  td.classList.add('has-array');
+  td.appendChild(link);
+}
+
+function openArrayDialog(array, name) {
+  const overlay = el('div', { class: 'array-dialog-backdrop' });
+  const dlg = el('div', { class: 'array-dialog' });
+  const head = el('div', { class: 'array-dialog-head' });
+  head.appendChild(el('h3', { text: name || 'Array data' }));
+  const shape = (array.dims && array.dims.length) ? array.dims.join(' × ') : String(array.points.length);
+  head.appendChild(el('span', { class: 'array-dialog-shape', text: shape }));
+  const closeBtn = el('button', { class: 'array-dialog-close', attrs: { type: 'button', 'aria-label': 'Close' }, text: '×' });
+  head.appendChild(closeBtn);
+  dlg.appendChild(head);
+  const body = el('div', { class: 'array-dialog-body' });
+  body.appendChild(buildArrayTable(array));
+  dlg.appendChild(body);
+  overlay.appendChild(dlg);
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+  ($('#theme-provider') || document.body).appendChild(overlay);
+}
+
+function buildArrayTable(array) {
+  const dims = array.dims || [];
+  const points = array.points || [];
+  const table = el('table', { class: 'array-table' });
+  const thead = el('thead');
+  const tbody = el('tbody');
+  if (dims.length >= 2) {
+    const rows = dims[0];
+    const cols = dims[1];
+    const grid = Array.from({ length: rows }, () => new Array(cols).fill(''));
+    for (const p of points) {
+      const rI = p.pos[0]; const cI = p.pos[1];
+      if (rI >= 0 && rI < rows && cI >= 0 && cI < cols) grid[rI][cI] = p.value;
+    }
+    const htr = el('tr');
+    htr.appendChild(el('th', { text: '#' }));
+    for (let c = 0; c < cols; c++) htr.appendChild(el('th', { text: `Column ${c}` }));
+    thead.appendChild(htr);
+    for (let rIdx = 0; rIdx < rows; rIdx++) {
+      const tr = el('tr');
+      tr.appendChild(el('td', { class: 'array-idx', text: String(rIdx) }));
+      for (let c = 0; c < cols; c++) tr.appendChild(el('td', { class: 'num', text: grid[rIdx][c] }));
+      tbody.appendChild(tr);
+    }
+  } else {
+    thead.innerHTML = '<tr><th>#</th><th>Value</th></tr>';
+    points.forEach((p, i) => {
+      const tr = el('tr');
+      tr.appendChild(el('td', { class: 'array-idx', text: String(p.pos.length ? p.pos[0] : i) }));
+      tr.appendChild(el('td', { class: 'num', text: p.value }));
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  return table;
+}
+
 // Render a value into a cell; if it contains base64 image data URIs, show the
-// image(s) instead of the raw text. Only the data: URI is extracted (no HTML
 // is injected), so this is safe from script injection.
 const DATA_URI_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
 function renderValueInto(td, value) {
@@ -1178,7 +1275,7 @@ function renderMeasurementsTable(node) {
     const tr = el('tr');
     tr.appendChild(el('td', { text: displayMeasName(m.name, node.name) }));
     const valTd = el('td', { class: 'num' });
-    renderValueInto(valTd, m.value);
+    renderMeasValue(valTd, m);
     tr.appendChild(valTd);
     tr.appendChild(el('td', { text: m.unit || '' }));
     tr.appendChild(el('td', { class: 'num', text: lim.low != null ? String(lim.low) : '' }));
