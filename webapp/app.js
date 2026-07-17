@@ -207,6 +207,7 @@ function formatDate(iso) {
 async function selectFile(f) {
   state.selectedId = f.id;
   renderFileList();
+  setSidebarCollapsed(true);
   showLoading(true);
   $('#empty-state').hidden = true;
   try {
@@ -1370,12 +1371,25 @@ function initTheme() {
 }
 
 /* ---------- Wire up ---------- */
+/* ---------- Sidebar collapse ---------- */
+function setSidebarCollapsed(collapsed) {
+  const layout = $('.layout');
+  if (!layout) return;
+  layout.classList.toggle('sidebar-collapsed', collapsed);
+  const btn = $('#sidebar-toggle');
+  if (btn) btn.title = collapsed ? 'Show file list' : 'Hide file list';
+}
+function toggleSidebar() {
+  const layout = $('.layout');
+  setSidebarCollapsed(!(layout && layout.classList.contains('sidebar-collapsed')));
+}
+
 function init() {
   initTheme();
-
   $('#file-search').addEventListener('input', (e) => onSearchInput(e.target.value));
   disableSuggestions($('#file-search'));
   $('#refresh-btn').addEventListener('click', () => loadFiles());
+  $('#sidebar-toggle').addEventListener('click', toggleSidebar);
   $('#workspace-select').addEventListener('change', (e) => { state.workspace = e.target.value; loadFiles(); });
 
   $('#view-rendered').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('rendered'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
