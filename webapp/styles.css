@@ -249,10 +249,16 @@ body {
 .st-mval-cell.has-images { white-space: normal; }
 .data-img {
   display: inline-block; vertical-align: top; margin: 3px 6px 3px 0;
-  max-width: 280px; max-height: 100px; border-radius: 2px;
+  max-width: 280px; max-height: 100px; border-radius: 2px; cursor: zoom-in;
   border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 14%, transparent);
 }
 .drawer-table .data-img { max-width: 100%; max-height: 360px; }
+.img-lightbox {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .8); cursor: zoom-out; padding: 24px;
+}
+.img-lightbox img { max-width: 96vw; max-height: 96vh; background: #fff; box-shadow: 0 4px 30px rgba(0, 0, 0, .5); }
 .no-results { padding: 24px; text-align: center; color: var(--text-muted); }
 
 /* ===== Step details slide-out (SystemLink-style) ===== */

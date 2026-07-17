@@ -741,12 +741,26 @@ function renderValueInto(td, value) {
   const uris = s.match(DATA_URI_RE);
   if (uris && uris.length) {
     for (const u of uris) {
-      td.appendChild(el('img', { class: 'data-img', attrs: { src: u, alt: 'embedded image', loading: 'lazy' } }));
+      const img = el('img', { class: 'data-img', attrs: { src: u, alt: 'embedded image', loading: 'lazy', title: 'Click to enlarge' } });
+      img.addEventListener('click', (e) => { e.stopPropagation(); openImageLightbox(u); });
+      td.appendChild(img);
     }
     td.classList.add('has-images');
   } else {
     td.textContent = s;
   }
+}
+
+function openImageLightbox(src) {
+  const box = $('#img-lightbox');
+  const img = $('#img-lightbox-img');
+  if (!box || !img) return;
+  img.src = src;
+  box.hidden = false;
+}
+function closeImageLightbox() {
+  const box = $('#img-lightbox');
+  if (box) box.hidden = true;
 }
 
 function statusIcon(outcome) {
@@ -1150,7 +1164,8 @@ function init() {
   $('#drawer-backdrop').addEventListener('click', closeStepDetails);
   $('#dtab-info').addEventListener('click', () => setDrawerTab('info'));
   $('#dtab-data').addEventListener('click', () => setDrawerTab('data'));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeStepDetails(); });
+  $('#img-lightbox').addEventListener('click', closeImageLightbox);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImageLightbox(); closeStepDetails(); } });
 
   fetchWorkspaces().then((list) => {
     const sel = $('#workspace-select');
