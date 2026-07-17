@@ -746,6 +746,10 @@ function renderValueInto(td, value) {
       td.appendChild(img);
     }
     td.classList.add('has-images');
+  } else if (s.length > 300) {
+    td.textContent = s.slice(0, 300) + '…';
+    td.title = s;
+    td.classList.add('truncated');
   } else {
     td.textContent = s;
   }
