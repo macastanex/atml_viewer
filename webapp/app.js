@@ -1390,6 +1390,8 @@ function setSidebarCollapsed(collapsed) {
   layout.classList.toggle('sidebar-collapsed', collapsed);
   const btn = $('#sidebar-toggle');
   if (btn) btn.title = collapsed ? 'Show file list' : 'Hide file list';
+  // The available width changed, so re-fit the steps table columns.
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
 function toggleSidebar() {
   const layout = $('.layout');
