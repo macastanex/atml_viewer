@@ -746,8 +746,8 @@ function renderValueInto(td, value) {
       td.appendChild(img);
     }
     td.classList.add('has-images');
-  } else if (s.length > 300) {
-    td.textContent = s.slice(0, 300) + '…';
+  } else if (s.length > 50) {
+    td.textContent = s.slice(0, 50) + '…';
     td.title = s;
     td.classList.add('truncated');
   } else {
