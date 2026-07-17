@@ -719,7 +719,7 @@ function renderStepsRow(row, onToggle) {
   const munit = el('td', { class: 'st-cell st-munit-cell' });
   if (m) {
     mname.textContent = m.name || '';
-    mval.textContent = m.value != null ? String(m.value) : '';
+    renderValueInto(mval, m.value);
     munit.textContent = m.unit || '';
     if (m.limits && m.limits.text) {
       mval.classList.add('has-limits');
@@ -730,6 +730,23 @@ function renderStepsRow(row, onToggle) {
   tr.appendChild(mval);
   tr.appendChild(munit);
   return tr;
+}
+
+// Render a value into a cell; if it contains base64 image data URIs, show the
+// image(s) instead of the raw text. Only the data: URI is extracted (no HTML
+// is injected), so this is safe from script injection.
+const DATA_URI_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
+function renderValueInto(td, value) {
+  const s = value == null ? '' : String(value);
+  const uris = s.match(DATA_URI_RE);
+  if (uris && uris.length) {
+    for (const u of uris) {
+      td.appendChild(el('img', { class: 'data-img', attrs: { src: u, alt: 'embedded image', loading: 'lazy' } }));
+    }
+    td.classList.add('has-images');
+  } else {
+    td.textContent = s;
+  }
 }
 
 function statusIcon(outcome) {
@@ -1043,7 +1060,9 @@ function renderMeasurementsTable(node) {
     const lim = m.limits || {};
     const tr = el('tr');
     tr.appendChild(el('td', { text: m.name || '' }));
-    tr.appendChild(el('td', { class: 'num', text: m.value != null ? String(m.value) : '' }));
+    const valTd = el('td', { class: 'num' });
+    renderValueInto(valTd, m.value);
+    tr.appendChild(valTd);
     tr.appendChild(el('td', { text: m.unit || '' }));
     tr.appendChild(el('td', { class: 'num', text: lim.low != null ? String(lim.low) : '' }));
     tr.appendChild(el('td', { class: 'num', text: lim.high != null ? String(lim.high) : '' }));

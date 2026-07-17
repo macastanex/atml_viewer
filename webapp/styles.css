@@ -246,6 +246,13 @@ body {
 .st-mval-cell { font-family: var(--mono); word-break: break-word; }
 .st-mval-cell.has-limits { cursor: help; text-decoration: underline dotted var(--border-strong); text-underline-offset: 3px; }
 .st-munit-cell { width: 90px; color: var(--text-muted); }
+.st-mval-cell.has-images { white-space: normal; }
+.data-img {
+  display: inline-block; vertical-align: top; margin: 3px 6px 3px 0;
+  max-width: 280px; max-height: 100px; border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 14%, transparent);
+}
+.drawer-table .data-img { max-width: 100%; max-height: 360px; }
 .no-results { padding: 24px; text-align: center; color: var(--text-muted); }
 
 /* ===== Step details slide-out (SystemLink-style) ===== */
