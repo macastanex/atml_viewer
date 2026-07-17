@@ -222,9 +222,11 @@ body {
 }
 .st-row:hover { background: var(--surface-2); }
 .st-cell { padding: 7px 12px; vertical-align: top; }
-/* Give the remaining table width to the Steps (name) column. */
+/* Split remaining width evenly across Steps, Measurement name and Value. */
 .steps-table thead th:first-child,
-.st-name-cell { width: 100%; }
+.steps-table thead th:nth-child(4),
+.steps-table thead th:nth-child(5),
+.st-name-cell, .st-mname-cell, .st-mval-cell { width: 33.33%; }
 .st-name-cell { white-space: nowrap; }
 .st-name-cell.clickable { cursor: pointer; }
 .st-chev {
@@ -233,7 +235,7 @@ body {
 }
 .st-chev nimble-icon-arrow-expander-down { width: 12px; height: 12px; }
 .st-row.is-collapsed .st-chev { transform: rotate(-90deg); }
-.st-name { font-weight: 500; white-space: normal; }
+.st-name { font-weight: 500; white-space: nowrap; }
 .st-name-link { cursor: pointer; }
 .st-name-link:hover { text-decoration: underline; }
 .st-meas .st-name-cell, .st-data .st-name-cell { color: var(--text-muted); }
