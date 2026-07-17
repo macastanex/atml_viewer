@@ -1,0 +1,1146 @@
+'use strict';
+
+/* =========================================================================
+ * ATML Viewer — SystemLink web app
+ * Browses File Service files, then renders ATML test results or generic XML.
+ * All API calls are same-origin relative paths so the SystemLink session
+ * cookie authenticates them through the web ingress.
+ * ========================================================================= */
+
+const FILE_API = '/nifile/v1';
+const SERVER_PAGE = 1000;   // files fetched per server request (API max)
+
+const state = {
+  files: [],            // current file results shown in the list
+  loading: false,
+  selectedId: null,
+  search: '',
+  workspace: '',
+  workspaceNames: {},   // id -> name
+  currentFile: null,    // metadata of the file currently open
+  currentDoc: null,     // parsed XML Document
+  currentRawText: '',
+  currentFormat: 'xml', // 'atml' | 'xml'
+  currentFilterMode: 'all',
+};
+
+/* ---------- DOM helpers ---------- */
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, opts = {}) => {
+  const n = document.createElement(tag);
+  if (opts.class) n.className = opts.class;
+  if (opts.text != null) n.textContent = opts.text;
+  if (opts.html != null) n.innerHTML = opts.html;
+  if (opts.attrs) for (const [k, v] of Object.entries(opts.attrs)) n.setAttribute(k, v);
+  return n;
+};
+
+/* ---------- API ---------- */
+async function apiGet(path, opts = {}) {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) {
+    const msg = res.status === 401 || res.status === 403
+      ? 'Not authorized. Open this app from within SystemLink so your session is used.'
+      : `Request failed (${res.status} ${res.statusText}).`;
+    throw new Error(msg);
+  }
+  return res;
+}
+
+async function fetchWorkspaces() {
+  try {
+    const res = await apiGet('/niuser/v1/workspaces?take=1000');
+    const data = await res.json();
+    const list = data.workspaces || data.value || [];
+    for (const w of list) state.workspaceNames[w.id] = w.name;
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+function fileName(f) {
+  return (f.properties && (f.properties.Name || f.properties.name)) || f.id;
+}
+function fileExt(f) {
+  const n = fileName(f);
+  const i = n.lastIndexOf('.');
+  return i >= 0 ? n.slice(i + 1).toLowerCase() : '';
+}
+
+/* ---------- File browser ----------
+ * Every workspace / search change runs a fresh query — no cached reuse:
+ *  - A specific workspace is scoped via the query-files `?workspace=` param
+ *    (the reliable server-side workspace scoping), then filtered to XML.
+ *  - "All workspaces" uses the Elasticsearch search-files endpoint with an
+ *    `extension: "xml"` filter (plus a name wildcard when searching).
+ */
+async function loadFiles() {
+  if (state.loading) return;
+  state.loading = true;
+  setFileStatus(state.search ? 'Searching…' : 'Loading files…');
+  try {
+    let files;
+    if (state.workspace) {
+      files = await queryWorkspaceXml(state.workspace);
+      const q = state.search.toLowerCase();
+      if (q) files = files.filter((f) => fileName(f).toLowerCase().includes(q));
+    } else {
+      files = await elasticXmlSearch(state.search);
+    }
+    state.files = files;
+    renderFileList();
+  } catch (e) {
+    setFileStatus(e.message, true);
+  } finally {
+    state.loading = false;
+  }
+}
+
+// Global XML search/browse via Elasticsearch (all workspaces), newest first.
+async function elasticXmlSearch(text) {
+  const clauses = ['extension: "xml"'];
+  if (text) {
+    const safe = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    clauses.push(`name: "*${safe}*"`);
+  }
+  const body = { filter: clauses.join(' AND '), orderBy: 'created', orderByDescending: true, take: 1000 };
+  const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  return data.availableFiles || data.files || data.value || [];
+}
+
+// All XML files in a specific workspace (scoped via the workspace query param).
+async function queryWorkspaceXml(workspaceId) {
+  const xml = [];
+  let skip = 0;
+  let total = null;
+  while (total === null || skip < total) {
+    const body = { take: SERVER_PAGE, skip, orderBy: 'createdTime', orderByDescending: true };
+    const res = await apiGet(`${FILE_API}/service-groups/Default/query-files?workspace=${encodeURIComponent(workspaceId)}`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    const items = data.availableFiles || data.files || data.value || [];
+    total = data.totalCount != null ? data.totalCount : skip + items.length;
+    if (!items.length) break;
+    skip += items.length;
+    for (const f of items) if (fileExt(f) === 'xml') xml.push(f);
+    if (skip >= 5000) break; // safety cap for very large workspaces
+  }
+  return xml;
+}
+
+// Debounced re-query as the user types in the file search box.
+let searchTimer = null;
+function onSearchInput(value) {
+  state.search = (value || '').trim();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadFiles(), 300);
+}
+
+function renderFileList() {
+  const ul = $('#file-list');
+  ul.innerHTML = '';
+  const files = state.files || [];
+  if (files.length === 0) {
+    setFileStatus(state.search ? 'No XML files match your search.' : 'No XML files found.');
+  } else {
+    const n = files.length;
+    setFileStatus(`${n} file${n === 1 ? '' : 's'}`);
+  }
+
+  for (const f of files) {
+    const ext = fileExt(f);
+    const li = el('li', { class: 'file-item' + (f.id === state.selectedId ? ' selected' : '') });
+    li.setAttribute('role', 'option');
+    li.tabIndex = 0;
+    const name = el('div', { class: 'fi-name' });
+    name.appendChild(el('span', { class: 'file-ext' + (ext === 'xml' ? ' xml' : ''), text: ext || 'file' }));
+    name.appendChild(el('span', { text: fileName(f) }));
+    const meta = el('div', {
+      class: 'fi-meta',
+      text: `${formatSize(f.size ?? f.size64)} · ${formatDate(f.updated || f.created)}${wsLabel(f.workspace)}`,
+    });
+    li.appendChild(name);
+    li.appendChild(meta);
+    li.addEventListener('click', () => selectFile(f));
+    li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectFile(f); } });
+    ul.appendChild(li);
+  }
+}
+
+function wsLabel(id) {
+  const n = state.workspaceNames[id];
+  return n ? ` · ${n}` : '';
+}
+function setFileStatus(msg, isError) {
+  const s = $('#file-status');
+  s.textContent = msg;
+  s.style.color = isError ? 'var(--fail)' : 'var(--text-muted)';
+}
+function formatSize(bytes) {
+  if (bytes == null) return '—';
+  const n = Number(bytes);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/* ---------- Load & render a file ---------- */
+async function selectFile(f) {
+  state.selectedId = f.id;
+  renderFileList();
+  showLoading(true);
+  $('#empty-state').hidden = true;
+  try {
+    const res = await apiGet(`${FILE_API}/service-groups/Default/files/${encodeURIComponent(f.id)}/data`, {
+      headers: {},
+    });
+    const text = await res.text();
+    openXml(text, fileName(f), f.id, f);
+  } catch (e) {
+    showViewerError(fileName(f), e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+function openXml(text, name, id, file) {
+  state.currentRawText = text;
+  state.currentFile = file || null;
+  $('#viewer').hidden = false;
+  $('#viewer-filename').textContent = name;
+  $('#download-btn').onclick = () => downloadFile(id, name);
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'application/xml');
+  const parseError = doc.querySelector('parsererror');
+  state.currentDoc = doc;
+
+  // Raw view
+  $('#raw-code').innerHTML = highlightXml(text);
+
+  const body = $('#viewer-body');
+  body.innerHTML = '';
+
+  if (parseError) {
+    state.currentFormat = 'xml';
+    setFormatBadge('Invalid XML', false);
+    body.appendChild(el('div', {
+      class: 'error-box',
+      text: 'This file is not valid XML and cannot be parsed. Use the Raw XML view to inspect its contents.',
+    }));
+    setView('rendered');
+    return;
+  }
+
+  if (isAtml(doc)) {
+    state.currentFormat = 'atml';
+    setFormatBadge('ATML', true);
+    renderAtml(doc, body);
+  } else {
+    state.currentFormat = 'xml';
+    setFormatBadge('XML', false);
+    renderGenericXml(doc, body);
+  }
+  setView('rendered');
+}
+
+function setFormatBadge(label, isAtml) {
+  const b = $('#format-badge');
+  b.textContent = label;
+  b.classList.toggle('atml', !!isAtml);
+}
+
+function showViewerError(name, msg) {
+  $('#empty-state').hidden = true;
+  $('#viewer').hidden = false;
+  $('#viewer-filename').textContent = name;
+  setFormatBadge('Error', false);
+  const body = $('#viewer-body');
+  body.innerHTML = '';
+  body.appendChild(el('div', { class: 'error-box', text: msg }));
+  setView('rendered');
+}
+
+async function downloadFile(id, name) {
+  try {
+    const res = await apiGet(`${FILE_API}/service-groups/Default/files/${encodeURIComponent(id)}/data`, { headers: {} });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = el('a', { attrs: { href: url, download: name } });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+/* ---------- ATML detection ---------- */
+const ATML_NS_HINTS = ['ieee-1636', 'ieee-1671', 'atmltestresults'];
+function isAtml(doc) {
+  const root = doc.documentElement;
+  if (!root) return false;
+  const ln = (root.localName || '').toLowerCase();
+  if (ln === 'testresultscollection' || ln === 'testresults') return true;
+  const ns = (root.namespaceURI || '').toLowerCase();
+  if (ATML_NS_HINTS.some((h) => ns.includes(h))) return true;
+  // Fallback: look for a ResultSet anywhere.
+  return !!firstByLocal(root, 'ResultSet');
+}
+
+/* ---------- namespace-agnostic traversal ---------- */
+function childrenByLocal(node, ...locals) {
+  const set = locals.map((l) => l.toLowerCase());
+  return Array.from(node.children).filter((c) => set.includes((c.localName || '').toLowerCase()));
+}
+function firstChildByLocal(node, local) {
+  return childrenByLocal(node, local)[0] || null;
+}
+function firstByLocal(node, local) {
+  const l = local.toLowerCase();
+  const walk = (n) => {
+    for (const c of Array.from(n.children)) {
+      if ((c.localName || '').toLowerCase() === l) return c;
+      const found = walk(c);
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(node);
+}
+function attr(node, name) {
+  if (!node) return null;
+  // try direct, then namespace-agnostic
+  if (node.hasAttribute && node.hasAttribute(name)) return node.getAttribute(name);
+  if (node.attributes) {
+    for (const a of Array.from(node.attributes)) {
+      if ((a.localName || a.name) && (a.localName || a.name).toLowerCase() === name.toLowerCase()) return a.value;
+    }
+  }
+  return null;
+}
+
+/* ---------- ATML rendering ---------- */
+const STEP_LOCALS = ['Test', 'SessionAction', 'TestGroup'];
+
+function renderAtml(doc, container) {
+  const results = firstByLocal(doc, 'TestResults') || doc.documentElement;
+  const resultSet = firstByLocal(results, 'ResultSet');
+  if (!resultSet) {
+    container.appendChild(el('div', { class: 'error-box', text: 'ATML file recognized but no ResultSet was found.' }));
+    return;
+  }
+
+  // ----- summary -----
+  const operator = attr(firstByLocal(results, 'SystemOperator'), 'name');
+  const uut = textOf(firstByLocal(firstChildByLocal(results, 'UUT') || results, 'SerialNumber'));
+  const station = textOf(firstByLocal(firstChildByLocal(results, 'TestStation') || results, 'SerialNumber'));
+  const overall = outcomeOf(resultSet);
+  const start = attr(resultSet, 'startDateTime');
+  const end = attr(resultSet, 'endDateTime');
+  const rsName = attr(resultSet, 'name') || 'Test Results';
+
+  const nodes = buildStepTree(resultSet);
+  const stats = { passed: 0, failed: 0, done: 0, other: 0, total: 0 };
+  countStats(nodes, stats);
+  state.currentFilterMode = 'all';
+
+  // ----- result header (SystemLink-style metadata bar) -----
+  const header = el('div', { class: 'result-header' });
+
+  // File metadata / properties first.
+  const file = state.currentFile;
+  if (file) {
+    header.appendChild(el('div', { class: 'rh-group-title', text: 'File' }));
+    const ff = el('div', { class: 'rh-fields' });
+    addField(ff, 'Name', fileName(file));
+    addField(ff, 'Size', formatSize(file.size ?? file.size64));
+    addField(ff, 'Created', formatDate(file.created) || '--');
+    addField(ff, 'Updated', formatDate(file.updated) || '--');
+    addField(ff, 'Workspace', state.workspaceNames[file.workspace] || file.workspace || '--');
+    addField(ff, 'File ID', file.id || '--');
+    const props = file.properties || {};
+    for (const k of Object.keys(props)) {
+      if (k === 'Name') continue;
+      addField(ff, k, String(props[k]));
+    }
+    header.appendChild(ff);
+  }
+
+  // ATML test-result metadata.
+  header.appendChild(el('div', { class: 'rh-group-title', text: 'Test Result' }));
+  const fields = el('div', { class: 'rh-fields' });
+  addField(fields, 'Test program', prettySequenceName(rsName));
+  const statusVal = el('span', { class: 'rh-status ' + outcomeClass(overall) });
+  statusVal.appendChild(statusIcon(overall));
+  statusVal.appendChild(el('span', { class: 'rh-status-text', text: overall || 'Unknown' }));
+  addFieldNode(fields, 'Status', statusVal);
+  addField(fields, 'Serial number', uut || '--');
+  addField(fields, 'Started', formatDate(start) || '--');
+  addField(fields, 'Elapsed time', durationBetween(start, end));
+  addField(fields, 'System', station || '--');
+  addField(fields, 'Operator', operator || '--');
+  header.appendChild(fields);
+  container.appendChild(header);
+
+  // ----- summary cards (also act as step filters) -----
+  const cardsWrap = el('div', { class: 'summary-cards' });
+  const cardDefs = [
+    { mode: 'all', label: 'Total steps', value: stats.total, cls: '' },
+    { mode: 'passed', label: 'Passed', value: stats.passed, cls: 'pass' },
+    { mode: 'failed', label: 'Failed', value: stats.failed, cls: 'fail' },
+  ];
+  const cardEls = [];
+  for (const def of cardDefs) {
+    const card = el('button', { class: 'summary-card-btn ' + def.cls, attrs: { type: 'button', title: `Show ${def.label.toLowerCase()}` } });
+    card.dataset.mode = def.mode;
+    if (def.mode === state.currentFilterMode) card.classList.add('active');
+    card.appendChild(el('span', { class: 'sc-label', text: def.label }));
+    card.appendChild(el('span', { class: 'sc-value', text: String(def.value) }));
+    card.addEventListener('click', () => setFilterMode(def.mode));
+    cardEls.push(card);
+    cardsWrap.appendChild(card);
+  }
+
+  // ----- flatten step tree into aligned rows -----
+  const rows = flattenRows(nodes);
+
+  const parentOf = new Map();
+  const childSteps = new Map();
+  for (const row of rows) {
+    parentOf.set(row.id, row.parent);
+    if (row.kind === 'step' && row.parent != null) {
+      if (!childSteps.has(row.parent)) childSteps.set(row.parent, []);
+      childSteps.get(row.parent).push(row.id);
+    }
+  }
+  const collapsed = new Set();
+
+  // ----- toolbar (compact summary cards + step search) -----
+  const toolbar = el('div', { class: 'steps-toolbar' });
+  const tools = el('div', { class: 'steps-tools' });
+  const searchInput = el('nimble-text-field', { attrs: { placeholder: 'Search steps…', 'aria-label': 'Search steps', autocomplete: 'off', spellcheck: 'false' } });
+  searchInput.appendChild(el('nimble-icon-magnifying-glass', { attrs: { slot: 'start' } }));
+  disableSuggestions(searchInput);
+  tools.appendChild(searchInput);
+  toolbar.appendChild(cardsWrap);
+  toolbar.appendChild(tools);
+  container.appendChild(toolbar);
+
+  function setFilterMode(mode) {
+    state.currentFilterMode = mode;
+    cardEls.forEach((c) => c.classList.toggle('active', c.dataset.mode === mode));
+    recompute();
+  }
+
+  // ----- steps table -----
+  const tableWrap = el('div', { class: 'steps-table-wrap' });
+  const table = el('table', { class: 'steps-table' });
+  const thead = el('thead');
+  const htr = el('tr');
+  ['Steps', 'Status', 'Elapsed time', 'Measurement name', 'Value', 'Unit'].forEach((h) => htr.appendChild(el('th', { text: h })));
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = el('tbody');
+  const rowEls = [];
+  for (const row of rows) {
+    const tr = renderStepsRow(row, row.expandable ? () => toggle(row.id) : null);
+    tbody.appendChild(tr);
+    rowEls.push({ row, tr });
+  }
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  const noRes = el('div', { class: 'no-results', text: 'No steps match your filter.' });
+  noRes.hidden = true;
+  tableWrap.appendChild(noRes);
+  container.appendChild(tableWrap);
+
+  // ----- collapse + filter -----
+  function toggle(id) { if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id); recompute(); }
+  function ancestorsExpanded(row) {
+    let p = row.parent;
+    while (p != null) { if (collapsed.has(p)) return false; p = parentOf.get(p); }
+    return true;
+  }
+  function recompute() {
+    const q = (searchInput.value || '').trim().toLowerCase();
+    const mode = state.currentFilterMode;
+    const filtering = q !== '' || mode !== 'all';
+    const selfMatch = new Map();
+    for (const { row } of rowEls) {
+      if (row.kind !== 'step') continue;
+      const outOk = mode === 'all' || (row.outcome || '').toLowerCase() === mode;
+      const qOk = !q || row.searchText.includes(q);
+      selfMatch.set(row.id, outOk && qOk);
+    }
+    const subtree = new Map();
+    for (let i = rowEls.length - 1; i >= 0; i--) {
+      const row = rowEls[i].row;
+      if (row.kind !== 'step') continue;
+      let m = selfMatch.get(row.id) === true;
+      for (const c of (childSteps.get(row.id) || [])) if (subtree.get(c)) m = true;
+      subtree.set(row.id, m);
+    }
+    let anyVisible = false;
+    for (const { row, tr } of rowEls) {
+      let show;
+      if (row.kind === 'step') {
+        show = subtree.get(row.id) === true;
+      } else {
+        show = subtree.get(row.parent) === true && (!filtering || selfMatch.get(row.parent) === true);
+      }
+      if (show && !filtering && !ancestorsExpanded(row)) show = false;
+      if (row.kind === 'step') tr.classList.toggle('is-collapsed', collapsed.has(row.id) && !filtering);
+      tr.hidden = !show;
+      if (show) anyVisible = true;
+    }
+    noRes.hidden = anyVisible;
+  }
+
+  searchInput.addEventListener('input', recompute);
+
+  recompute();
+}
+
+function buildStepTree(parent) {
+  const out = [];
+  for (const child of Array.from(parent.children)) {
+    const ln = (child.localName || '');
+    if (!STEP_LOCALS.map((s) => s.toLowerCase()).includes(ln.toLowerCase())) continue;
+    const node = {
+      el: child,
+      kind: ln,
+      name: attr(child, 'callerName') || attr(child, 'name') || ln,
+      id: attr(child, 'ID'),
+      start: attr(child, 'startDateTime'),
+      end: attr(child, 'endDateTime'),
+      outcome: outcomeOf(child),
+      stepType: stepType(child),
+      time: stepTime(child),
+      children: buildStepTree(child),
+      measurements: extractMeasurements(child),
+      data: extractData(child),
+    };
+    out.push(node);
+  }
+  return out;
+}
+
+function outcomeOf(node) {
+  const o = firstChildByLocal(node, 'Outcome') || firstChildByLocal(node, 'ActionOutcome');
+  return o ? attr(o, 'value') : null;
+}
+function stepType(node) {
+  const st = firstByLocal(node, 'StepType');
+  return st ? textOf(st) : null;
+}
+function stepTime(node) {
+  const t = firstByLocal(node, 'TotalTime');
+  const v = t ? attr(t, 'value') : null;
+  return v != null ? Number(v) : null;
+}
+
+function extractMeasurements(node) {
+  // Only direct TestResult children (not from nested steps).
+  const results = childrenByLocal(node, 'TestResult');
+  const out = [];
+  for (const r of results) {
+    const name = attr(r, 'name') || 'Measurement';
+    const dataEl = firstChildByLocal(r, 'TestData');
+    const datum = dataEl ? firstChildByLocal(dataEl, 'Datum') : null;
+    const value = datum ? datumValue(datum) : '';
+    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '') : '';
+    const type = datum ? shortType(attr(datum, 'type') || datumXsiType(datum)) : '';
+    const limits = extractLimits(r);
+    out.push({ name, value, unit, type, limits });
+  }
+  return out;
+}
+
+function datumXsiType(datum) {
+  // xsi:type attribute
+  return attr(datum, 'type');
+}
+function datumValue(datum) {
+  const v = attr(datum, 'value');
+  if (v != null) return v;
+  const valEl = firstChildByLocal(datum, 'Value');
+  return valEl ? textOf(valEl) : '';
+}
+function shortType(t) {
+  if (!t) return '';
+  return String(t).replace(/^.*?:/, '').replace(/^TS_/, '');
+}
+
+function extractLimits(testResult) {
+  const tl = firstChildByLocal(testResult, 'TestLimits');
+  if (!tl) return null;
+  const limits = firstChildByLocal(tl, 'Limits');
+  if (!limits) return null;
+  let comparator = null, low = null, high = null;
+  const single = firstChildByLocal(limits, 'SingleLimit');
+  const pair = firstChildByLocal(limits, 'LimitPair');
+  if (single) {
+    comparator = attr(single, 'comparator');
+    const v = datumValue(firstChildByLocal(single, 'Datum'));
+    if (/^G/.test(comparator || '')) low = v; else if (/^L/.test(comparator || '')) high = v; else low = v;
+  } else if (pair) {
+    const comps = [];
+    for (const lim of childrenByLocal(pair, 'Limit')) {
+      const c = attr(lim, 'comparator');
+      comps.push(c);
+      const v = datumValue(firstChildByLocal(lim, 'Datum'));
+      if (/^G/.test(c || '')) low = v; else if (/^L/.test(c || '')) high = v;
+    }
+    comparator = comps.join('');
+  }
+  // TestStand RawLimits are authoritative for low/high when present.
+  const raw = firstByLocal(limits, 'RawLimits');
+  if (raw) {
+    const lo = firstChildByLocal(raw, 'Low');
+    const hi = firstChildByLocal(raw, 'High');
+    if (lo && attr(lo, 'value') != null) low = attr(lo, 'value');
+    if (hi && attr(hi, 'value') != null) high = attr(hi, 'value');
+  }
+  const exp = firstByLocal(limits, 'Expected');
+  if (!single && !pair && exp) { comparator = 'EQ'; low = high = datumValue(firstChildByLocal(exp, 'Datum') || exp); }
+  let text = '';
+  if (low != null && high != null) text = `${low} … ${high}`;
+  else if (low != null) text = `${cmpSymbol(comparator)} ${low}`;
+  else if (high != null) text = `${cmpSymbol(comparator)} ${high}`;
+  return { comparator, low, high, text };
+}
+function cmpSymbol(c) {
+  const map = { GT: '>', GE: '≥', LT: '<', LE: '≤', EQ: '=', NE: '≠', GELE: 'in', GTLT: 'in', LTGT: 'out' };
+  return map[c] || c || '';
+}
+
+function extractData(node) {
+  const dataEl = firstChildByLocal(node, 'Data');
+  if (!dataEl) return [];
+  const coll = firstByLocal(dataEl, 'Collection');
+  if (!coll) return [];
+  const items = childrenByLocal(coll, 'Item');
+  return items.map((it) => {
+    const datum = firstChildByLocal(it, 'Datum');
+    return { key: attr(it, 'name') || '(item)', value: datum ? datumValue(datum) : '' };
+  }).filter((d) => d.value !== '' && d.value != null);
+}
+
+/* ---------- Flat aligned steps grid (SystemLink Steps-page style) ---------- */
+function flattenRows(nodes) {
+  const rows = [];
+  let seq = 0;
+  const walk = (list, depth, parentId) => {
+    for (const node of list) {
+      const id = ++seq;
+      const meas = node.measurements || [];
+      const data = node.data || [];
+      const first = meas.length ? meas[0] : null;
+      const extra = meas.slice(1);
+      const expandable = (extra.length + data.length + node.children.length) > 0;
+      const searchText = (
+        node.name + ' ' +
+        meas.map((m) => `${m.name} ${m.value} ${m.unit}`).join(' ') + ' ' +
+        data.map((d) => `${d.key} ${d.value}`).join(' ')
+      ).toLowerCase();
+      rows.push({
+        id, parent: parentId, depth, kind: 'step',
+        name: node.name, outcome: node.outcome, time: node.time,
+        stepType: node.stepType, measurement: first, expandable, searchText, node,
+      });
+      for (const m of extra) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'meas', measurement: m });
+      for (const d of data) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'data', dataItem: d });
+      walk(node.children, depth + 1, id);
+    }
+  };
+  walk(nodes, 0, null);
+  return rows;
+}
+
+function renderStepsRow(row, onToggle) {
+  const tr = el('tr', { class: 'st-row st-' + row.kind });
+  if (row.kind === 'step') tr.dataset.outcome = (row.outcome || '').toLowerCase();
+
+  // Steps column (name + hierarchy)
+  const c1 = el('td', { class: 'st-cell st-name-cell' });
+  c1.style.paddingLeft = `${10 + row.depth * 22}px`;
+  const chev = el('span', { class: 'st-chev' });
+  if (row.kind === 'step' && row.expandable) {
+    chev.appendChild(el('nimble-icon-arrow-expander-down'));
+    if (onToggle) {
+      chev.classList.add('clickable');
+      chev.addEventListener('click', (ev) => { ev.stopPropagation(); onToggle(); });
+    }
+  }
+  c1.appendChild(chev);
+  if (row.kind === 'step') {
+    const nameEl = el('span', { class: 'st-name st-name-link', text: row.name, attrs: { title: 'View step details' } });
+    nameEl.addEventListener('click', () => openStepDetails(row.node));
+    c1.appendChild(nameEl);
+  }
+  tr.appendChild(c1);
+
+  // Status column
+  const c2 = el('td', { class: 'st-cell st-status-cell' });
+  if (row.kind === 'step') c2.appendChild(statusIcon(row.outcome));
+  tr.appendChild(c2);
+
+  // Elapsed time
+  const timeText = (row.kind === 'step' && row.time != null && !isNaN(row.time)) ? formatSeconds(row.time) : '';
+  tr.appendChild(el('td', { class: 'st-cell st-time-cell', text: timeText }));
+
+  // Measurement name / value / unit
+  const m = row.kind === 'meas' ? row.measurement
+    : row.kind === 'data' ? { name: row.dataItem.key, value: row.dataItem.value, unit: '' }
+      : row.measurement;
+  const mname = el('td', { class: 'st-cell st-mname-cell' });
+  const mval = el('td', { class: 'st-cell st-mval-cell' });
+  const munit = el('td', { class: 'st-cell st-munit-cell' });
+  if (m) {
+    mname.textContent = m.name || '';
+    mval.textContent = m.value != null ? String(m.value) : '';
+    munit.textContent = m.unit || '';
+    if (m.limits && m.limits.text) {
+      mval.classList.add('has-limits');
+      mval.title = `Limits: ${m.limits.text}`;
+    }
+  }
+  tr.appendChild(mname);
+  tr.appendChild(mval);
+  tr.appendChild(munit);
+  return tr;
+}
+
+function statusIcon(outcome) {
+  const v = (outcome || '').toLowerCase();
+  const span = el('span', { class: 'st-status ' + outcomeClass(outcome) });
+  let tag = null, severity = null;
+  if (v === 'passed') { tag = 'nimble-icon-check'; severity = 'success'; }
+  else if (v === 'failed') { tag = 'nimble-icon-times'; severity = 'error'; }
+  else if (v === 'done') { tag = 'nimble-icon-check'; }
+  else if (v === 'error' || v === 'errored' || v === 'terminated') { tag = 'nimble-icon-exclamation-mark'; severity = 'warning'; }
+  if (tag) {
+    const attrs = severity ? { severity } : {};
+    span.appendChild(el(tag, { attrs }));
+  } else {
+    span.appendChild(el('span', { class: 'st-dot' }));
+  }
+  return span;
+}
+
+function countStats(nodes, stats) {
+  for (const n of nodes) {
+    stats.total++;
+    const o = (n.outcome || '').toLowerCase();
+    if (o === 'passed') stats.passed++;
+    else if (o === 'failed') stats.failed++;
+    else if (o === 'done') stats.done++;
+    else stats.other++;
+    countStats(n.children, stats);
+  }
+}
+
+/* ---------- ATML helpers ---------- */
+function outcomeClass(o) {
+  const v = (o || '').toLowerCase();
+  if (v === 'passed') return 'outcome-passed passed';
+  if (v === 'failed') return 'outcome-failed failed';
+  if (v === 'done') return 'outcome-done done';
+  if (v === 'error' || v === 'errored') return 'outcome-error error';
+  if (v === 'terminated') return 'outcome-terminated terminated';
+  if (v === 'skipped') return 'outcome-skipped skipped';
+  return 'outcome-unknown unknown';
+}
+function textOf(node) { return node ? (node.textContent || '').trim() : ''; }
+function addField(container, label, value) {
+  const item = el('div', { class: 'rh-item' });
+  item.appendChild(el('span', { class: 'rh-label', text: label }));
+  item.appendChild(el('span', { class: 'rh-value', text: value }));
+  container.appendChild(item);
+}
+function addFieldNode(container, label, valueNode) {
+  const item = el('div', { class: 'rh-item' });
+  item.appendChild(el('span', { class: 'rh-label', text: label }));
+  const val = el('span', { class: 'rh-value' });
+  val.appendChild(valueNode);
+  item.appendChild(val);
+  container.appendChild(item);
+}
+function addMeta(grid, label, value) {
+  const item = el('div', { class: 'meta-item' });
+  item.appendChild(el('span', { class: 'meta-label', text: label }));
+  item.appendChild(el('span', { class: 'meta-value', text: value }));
+  grid.appendChild(item);
+}
+function addStat(row, num, label, cls) {
+  const chip = el('div', { class: 'stat-chip ' + cls });
+  chip.appendChild(el('span', { class: 'num', text: String(num) }));
+  chip.appendChild(el('span', { class: 'lbl', text: label }));
+  row.appendChild(chip);
+}
+function prettySequenceName(name) {
+  if (!name) return 'Test Results';
+  const hashIdx = name.indexOf('#');
+  let s = name;
+  if (hashIdx >= 0) {
+    const before = name.slice(0, hashIdx);
+    const seq = before.split(/[\\/]/).pop();
+    const after = name.slice(hashIdx + 1);
+    s = seq ? `${seq} · ${after}` : after;
+  } else {
+    s = name.split(/[\\/]/).pop() || name;
+  }
+  return s;
+}
+function durationBetween(start, end) {
+  if (!start || !end) return '—';
+  const ms = new Date(end) - new Date(start);
+  if (isNaN(ms) || ms < 0) return '—';
+  return formatSeconds(ms / 1000);
+}
+function formatSeconds(s) {
+  if (s == null || isNaN(s)) return '';
+  if (s < 1) return `${(s * 1000).toFixed(0)} ms`;
+  if (s < 60) return `${s.toFixed(2)} s`;
+  const m = Math.floor(s / 60);
+  const rem = (s % 60).toFixed(0);
+  return `${m}m ${rem}s`;
+}
+
+/* ---------- Generic XML tree ---------- */
+function renderGenericXml(doc, container) {
+  const tree = el('div', { class: 'xml-tree' });
+  // Render any leading processing instructions / comments at document level.
+  for (const n of Array.from(doc.childNodes)) {
+    if (n.nodeType === Node.PROCESSING_INSTRUCTION_NODE) {
+      tree.appendChild(el('div', { class: 'xml-decl xml-content', text: `<?${n.target} ${n.data}?>` }));
+    }
+  }
+  tree.appendChild(renderXmlElement(doc.documentElement, 0));
+  container.appendChild(tree);
+}
+
+function renderXmlElement(node, depth) {
+  const wrap = el('div', { class: 'xml-el' });
+
+  const childElements = Array.from(node.childNodes).filter(
+    (c) => c.nodeType === Node.ELEMENT_NODE ||
+      (c.nodeType === Node.TEXT_NODE && c.textContent.trim()) ||
+      c.nodeType === Node.COMMENT_NODE ||
+      c.nodeType === Node.CDATA_SECTION_NODE
+  );
+  const onlyText = childElements.length === 1 && childElements[0].nodeType !== Node.ELEMENT_NODE && childElements[0].nodeType !== Node.COMMENT_NODE;
+  const hasElementChildren = childElements.some((c) => c.nodeType === Node.ELEMENT_NODE || c.nodeType === Node.COMMENT_NODE);
+  const empty = childElements.length === 0;
+
+  const line = el('div', { class: 'xml-line' });
+  const toggle = el('span', { class: 'xml-toggle' + (hasElementChildren ? '' : ' placeholder'), text: hasElementChildren ? '▾' : '' });
+  line.appendChild(toggle);
+
+  const content = el('span', { class: 'xml-content' });
+  const openParts = [];
+  openParts.push(spanHtml('tag', `&lt;${escapeHtml(node.nodeName)}`));
+  for (const a of Array.from(node.attributes || [])) {
+    openParts.push(' ' + spanHtml('attr-name', escapeHtml(a.nodeName)) + spanHtml('tag', '=') + spanHtml('attr-value', `&quot;${escapeHtml(a.value)}&quot;`));
+  }
+
+  if (empty) {
+    openParts.push(spanHtml('tag', '/&gt;'));
+    content.innerHTML = openParts.join('');
+  } else if (onlyText) {
+    openParts.push(spanHtml('tag', '&gt;'));
+    openParts.push(spanHtml('xml-text', escapeHtml(childElements[0].textContent.trim())));
+    openParts.push(spanHtml('tag', `&lt;/${escapeHtml(node.nodeName)}&gt;`));
+    content.innerHTML = openParts.join('');
+  } else {
+    openParts.push(spanHtml('tag', '&gt;'));
+    openParts.push(`<span class="xml-collapsed-hint">…&lt;/${escapeHtml(node.nodeName)}&gt;</span>`);
+    content.innerHTML = openParts.join('');
+  }
+  line.appendChild(content);
+  wrap.appendChild(line);
+
+  if (!empty && !onlyText) {
+    const children = el('div', { class: 'xml-children' });
+    for (const c of childElements) {
+      if (c.nodeType === Node.ELEMENT_NODE) {
+        children.appendChild(renderXmlElement(c, depth + 1));
+      } else if (c.nodeType === Node.COMMENT_NODE) {
+        children.appendChild(el('div', { class: 'xml-comment xml-content', text: `<!-- ${c.textContent.trim()} -->` }));
+      } else {
+        children.appendChild(el('div', { class: 'xml-text xml-content', text: c.textContent.trim() }));
+      }
+    }
+    const closeLine = el('div', { class: 'xml-line' });
+    closeLine.appendChild(el('span', { class: 'xml-toggle placeholder' }));
+    closeLine.appendChild(el('span', { class: 'xml-content', html: spanHtml('tag', `&lt;/${escapeHtml(node.nodeName)}&gt;`) }));
+    wrap.appendChild(children);
+    wrap.appendChild(closeLine);
+
+    if (hasElementChildren) {
+      const doToggle = () => {
+        const collapsed = wrap.classList.toggle('collapsed');
+        toggle.textContent = collapsed ? '▸' : '▾';
+        closeLine.style.display = collapsed ? 'none' : '';
+      };
+      toggle.addEventListener('click', doToggle);
+      // clicking the open tag also toggles
+      content.style.cursor = 'pointer';
+      content.addEventListener('click', doToggle);
+    }
+  }
+  return wrap;
+}
+
+function spanHtml(cls, inner) { return `<span class="${cls}">${inner}</span>`; }
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* ---------- Raw XML syntax highlighting (IDE-like) ---------- */
+function highlightXml(text) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const re = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<\/?[A-Za-z_][^>]*?\/?>/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out += spanHtml('xml-text', esc(text.slice(last, m.index)));
+    const tok = m[0];
+    if (tok.startsWith('<!--')) out += spanHtml('xml-comment', esc(tok));
+    else if (tok.startsWith('<?')) out += spanHtml('xml-decl', esc(tok));
+    else if (tok.startsWith('<![CDATA[')) out += spanHtml('xml-text', esc(tok));
+    else if (tok.startsWith('<!DOCTYPE')) out += spanHtml('xml-decl', esc(tok));
+    else out += highlightXmlTag(tok, esc);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out += spanHtml('xml-text', esc(text.slice(last)));
+  return out;
+}
+
+function highlightXmlTag(tok, esc) {
+  const mm = /^<(\/?)([A-Za-z_][\w:.\-]*)([\s\S]*?)(\/?)>$/.exec(tok);
+  if (!mm) return spanHtml('tag', esc(tok));
+  const slash = mm[1], name = mm[2], attrs = mm[3], selfClose = mm[4];
+  let html = spanHtml('tag', `&lt;${slash}${esc(name)}`);
+  html += esc(attrs).replace(/([\w:.\-]+)(\s*=\s*)("[^"]*"|'[^']*')/g,
+    (w, an, eq, av) => `${spanHtml('attr-name', an)}${eq}${spanHtml('attr-value', av)}`);
+  html += spanHtml('tag', `${selfClose ? '/' : ''}&gt;`);
+  return html;
+}
+
+/* ---------- View switching ---------- */
+let suppressViewToggle = false;
+function setView(which) {
+  const rendered = which === 'rendered';
+  $('#viewer-body').hidden = !rendered;
+  $('#raw-view').hidden = rendered;
+  suppressViewToggle = true;
+  $('#view-rendered').checked = rendered;
+  $('#view-raw').checked = !rendered;
+  suppressViewToggle = false;
+}
+
+function showLoading(on) { $('#loading-overlay').hidden = !on; }
+
+// Turn off browser autofill/suggestion dropdowns on a nimble-text-field.
+function disableSuggestions(tf) {
+  if (!tf) return;
+  const apply = () => {
+    const inp = tf.shadowRoot && tf.shadowRoot.querySelector('input');
+    if (inp) {
+      inp.setAttribute('autocomplete', 'off');
+      inp.setAttribute('autocapitalize', 'off');
+      inp.setAttribute('autocorrect', 'off');
+      inp.setAttribute('spellcheck', 'false');
+      return true;
+    }
+    return false;
+  };
+  if (!apply()) setTimeout(apply, 0);
+}
+
+/* ---------- Step details slide-out ---------- */
+function openStepDetails(node) {
+  if (!node) return;
+  $('#drawer-step-name').textContent = node.name || '';
+
+  const info = $('#drawer-info');
+  info.innerHTML = '';
+  info.appendChild(drawerSection('Measurements', renderMeasurementsTable(node)));
+  info.appendChild(drawerSection('Inputs', el('div', { class: 'drawer-empty', text: 'No inputs' })));
+  info.appendChild(drawerSection('Outputs', el('div', { class: 'drawer-empty', text: 'No outputs' })));
+  info.appendChild(drawerSection('Properties', renderPropertiesTable(node)));
+
+  const data = $('#drawer-data');
+  data.innerHTML = '';
+  if (node.el) {
+    const xml = new XMLSerializer().serializeToString(node.el);
+    const pre = el('pre', { class: 'drawer-raw' });
+    const code = el('code');
+    code.innerHTML = highlightXml(xml);
+    pre.appendChild(code);
+    data.appendChild(pre);
+  } else {
+    data.appendChild(el('div', { class: 'drawer-empty', text: 'No data' }));
+  }
+
+  setDrawerTab('info');
+  $('#step-drawer').classList.add('open');
+  $('#drawer-backdrop').classList.add('open');
+}
+function closeStepDetails() {
+  $('#step-drawer').classList.remove('open');
+  $('#drawer-backdrop').classList.remove('open');
+}
+function setDrawerTab(which) {
+  const info = which === 'info';
+  $('#drawer-info').hidden = !info;
+  $('#drawer-data').hidden = info;
+  $('#dtab-info').classList.toggle('active', info);
+  $('#dtab-data').classList.toggle('active', !info);
+}
+function drawerSection(title, contentEl) {
+  const sec = el('div', { class: 'drawer-section' });
+  const head = el('button', { class: 'drawer-section-head', attrs: { type: 'button' } });
+  head.appendChild(el('span', { class: 'ds-chev', text: '▾' }));
+  head.appendChild(el('span', { class: 'ds-title', text: title }));
+  head.addEventListener('click', () => sec.classList.toggle('collapsed'));
+  const body = el('div', { class: 'drawer-section-body' });
+  body.appendChild(contentEl);
+  sec.appendChild(head);
+  sec.appendChild(body);
+  return sec;
+}
+function renderMeasurementsTable(node) {
+  const meas = node.measurements || [];
+  if (!meas.length) return el('div', { class: 'drawer-empty', text: 'No measurements' });
+  const table = el('table', { class: 'drawer-table' });
+  const thead = el('thead');
+  thead.innerHTML = '<tr><th>Name</th><th>Value</th><th>Unit</th><th>Low Limit</th><th>High Limit</th><th>Comparison Type</th><th class="dt-status"></th></tr>';
+  table.appendChild(thead);
+  const tb = el('tbody');
+  for (const m of meas) {
+    const lim = m.limits || {};
+    const tr = el('tr');
+    tr.appendChild(el('td', { text: m.name || '' }));
+    tr.appendChild(el('td', { class: 'num', text: m.value != null ? String(m.value) : '' }));
+    tr.appendChild(el('td', { text: m.unit || '' }));
+    tr.appendChild(el('td', { class: 'num', text: lim.low != null ? String(lim.low) : '' }));
+    tr.appendChild(el('td', { class: 'num', text: lim.high != null ? String(lim.high) : '' }));
+    tr.appendChild(el('td', { text: lim.comparator || '' }));
+    const st = el('td', { class: 'dt-status' });
+    st.appendChild(statusIcon(node.outcome));
+    tr.appendChild(st);
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  return table;
+}
+function renderPropertiesTable(node) {
+  const props = [
+    ['Started at', formatDate(node.start) || '—'],
+    ['Ended at', formatDate(node.end) || '—'],
+    ['Status type', node.outcome || '—'],
+    ['Step type', node.stepType || '—'],
+    ['Total time', (node.time != null && !isNaN(node.time)) ? formatSeconds(node.time) : '—'],
+    ['ID', node.id || '—'],
+  ];
+  return keyValueTable(props);
+}
+function renderDataTable(data) {
+  return keyValueTable(data.map((d) => [d.key, d.value != null ? String(d.value) : '']));
+}
+function keyValueTable(rows) {
+  const table = el('table', { class: 'drawer-table' });
+  const thead = el('thead');
+  thead.innerHTML = '<tr><th>Name</th><th>Value</th></tr>';
+  table.appendChild(thead);
+  const tb = el('tbody');
+  for (const [k, v] of rows) {
+    const tr = el('tr');
+    tr.appendChild(el('td', { text: k }));
+    tr.appendChild(el('td', { text: v }));
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  return table;
+}
+
+
+/* ---------- Theme ---------- */
+/* The theme is taken from the SystemLink user account setting. The SystemLink
+   shell stores the active theme in localStorage under the "theme" key, and the
+   web app is hosted in a same-origin iframe, so it shares that value. We simply
+   mirror it onto our Nimble theme provider and follow live changes. */
+const NIMBLE_THEMES = ['light', 'dark', 'color', 'legacy'];
+function readSystemLinkTheme() {
+  try {
+    const t = (localStorage.getItem('theme') || '').toLowerCase();
+    if (NIMBLE_THEMES.includes(t)) return t;
+  } catch { /* localStorage may be unavailable */ }
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  } catch { /* ignore */ }
+  return 'light';
+}
+function applyTheme(theme) {
+  const provider = $('#theme-provider');
+  if (provider) provider.setAttribute('theme', NIMBLE_THEMES.includes(theme) ? theme : 'light');
+}
+function initTheme() {
+  applyTheme(readSystemLinkTheme());
+  // Follow the account/shell theme if the user changes it while the app is open.
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'theme' || e.key === null) applyTheme(readSystemLinkTheme());
+  });
+}
+
+/* ---------- Wire up ---------- */
+function init() {
+  initTheme();
+
+  $('#file-search').addEventListener('input', (e) => onSearchInput(e.target.value));
+  disableSuggestions($('#file-search'));
+  $('#refresh-btn').addEventListener('click', () => loadFiles());
+  $('#workspace-select').addEventListener('change', (e) => { state.workspace = e.target.value; loadFiles(); });
+
+  $('#view-rendered').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('rendered'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
+  $('#view-raw').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('raw'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
+
+  $('#drawer-close').addEventListener('click', closeStepDetails);
+  $('#drawer-backdrop').addEventListener('click', closeStepDetails);
+  $('#dtab-info').addEventListener('click', () => setDrawerTab('info'));
+  $('#dtab-data').addEventListener('click', () => setDrawerTab('data'));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeStepDetails(); });
+
+  fetchWorkspaces().then((list) => {
+    const sel = $('#workspace-select');
+    for (const w of list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+      sel.appendChild(el('nimble-list-option', { text: w.name || w.id, attrs: { value: w.id } }));
+    }
+  });
+
+  loadFiles();
+}
+
+document.addEventListener('DOMContentLoaded', init);

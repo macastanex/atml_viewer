@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ATML Viewer</title>
+  <link rel="stylesheet" href="nimble/fonts/css/fonts.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="nimble/all-components-bundle.min.js"></script>
+</head>
+<body>
+  <nimble-theme-provider id="theme-provider" theme="light">
+    <nimble-label-provider-core></nimble-label-provider-core>
+
+    <header class="app-header">
+    <div class="brand">
+      <svg class="brand-logo" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M14 2v6h6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M8.5 13.5l2 2 4-4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <h1>ATML Viewer</h1>
+        <p class="subtitle">Browse SystemLink files and inspect ATML test results</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- File browser -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-controls">
+        <nimble-text-field id="file-search" type="text" placeholder="Search file name…" autocomplete="off" spellcheck="false">
+          <nimble-icon-magnifying-glass slot="start"></nimble-icon-magnifying-glass>
+          Search files
+        </nimble-text-field>
+        <div class="ws-row">
+          <nimble-select id="workspace-select">
+            <nimble-list-option value="" selected>All workspaces</nimble-list-option>
+          </nimble-select>
+          <button id="refresh-btn" class="icon-btn" type="button" title="Reload files" aria-label="Reload files">
+            <nimble-icon-arrow-rotate-right></nimble-icon-arrow-rotate-right>
+          </button>
+        </div>
+      </div>
+      <div id="file-status" class="file-status">Loading files…</div>
+      <ul id="file-list" class="file-list" role="listbox" aria-label="Files"></ul>
+    </aside>
+
+    <!-- Content -->
+    <section class="content" id="content">
+      <div id="empty-state" class="empty-state">
+        <div class="empty-illustration">〈/〉</div>
+        <h2>Select a file to view</h2>
+        <p>Choose an XML file from the list. ATML test-result files get an interactive viewer; other XML files use a structured tree view.</p>
+      </div>
+
+      <div id="viewer" class="viewer" hidden>
+        <div class="viewer-topbar">
+          <div class="viewer-title">
+            <span id="format-badge" class="format-badge">XML</span>
+            <span id="viewer-filename" class="viewer-filename"></span>
+          </div>
+          <div class="viewer-actions">
+            <div class="seg" role="group" aria-label="View mode">
+              <nimble-toggle-button id="view-rendered" checked appearance="outline">Rendered</nimble-toggle-button>
+              <nimble-toggle-button id="view-raw" appearance="outline">Raw XML</nimble-toggle-button>
+            </div>
+            <nimble-button id="download-btn" appearance="ghost" title="Download original file">
+              <svg slot="start" class="dl-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v12"/>
+                <path d="M7 10l5 5 5-5"/>
+                <path d="M4 20h16"/>
+              </svg>
+              Download
+            </nimble-button>
+          </div>
+        </div>
+        <div id="viewer-body" class="viewer-body"></div>
+        <pre id="raw-view" class="raw-view" hidden><code id="raw-code"></code></pre>
+      </div>
+
+      <div id="loading-overlay" class="loading-overlay" hidden>
+        <nimble-spinner appearance="accent"></nimble-spinner>
+        <span>Loading file…</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- Step details slide-out -->
+  <div id="drawer-backdrop" class="drawer-backdrop"></div>
+  <aside id="step-drawer" class="step-drawer" aria-label="Step details">
+    <header class="drawer-header">
+      <h2>Step Details</h2>
+      <div id="drawer-step-name" class="drawer-subtitle"></div>
+    </header>
+    <div class="drawer-tabs" role="tablist">
+      <button id="dtab-info" class="drawer-tab active" type="button">Info</button>
+      <button id="dtab-data" class="drawer-tab" type="button">Data</button>
+    </div>
+    <div class="drawer-body">
+      <div id="drawer-info"></div>
+      <div id="drawer-data" hidden></div>
+    </div>
+    <footer class="drawer-footer">
+      <nimble-button id="drawer-close" appearance="ghost">Close</nimble-button>
+    </footer>
+  </aside>
+  </nimble-theme-provider>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# Dependencies / build tooling (Nimble is vendored under webapp/nimble)
+node_modules/
+nimble-build/
+
+# Local temp / scratch
+*.log
+sample.xml
+motherboard.xml
+xmlfiles.json
+nifile.yaml
+probe*.ps1
+getxml.ps1
+getspec.ps1
+
+# OS / editor
+.DS_Store
+Thumbs.db
