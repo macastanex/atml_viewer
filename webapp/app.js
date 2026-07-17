@@ -474,6 +474,7 @@ function renderAtml(doc, container) {
   noRes.hidden = true;
   tableWrap.appendChild(noRes);
   container.appendChild(tableWrap);
+  setupResizableColumns(table);
 
   // ----- collapse + filter -----
   function toggle(id) { if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id); recompute(); }
@@ -669,7 +670,7 @@ function flattenRows(nodes) {
         name: node.name, outcome: node.outcome, time: node.time,
         stepType: node.stepType, measurement: first, expandable, searchText, node,
       });
-      for (const m of extra) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'meas', measurement: m });
+      for (const m of extra) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'meas', measurement: m, stepName: node.name });
       for (const d of data) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'data', dataItem: d });
       walk(node.children, depth + 1, id);
     }
@@ -718,7 +719,8 @@ function renderStepsRow(row, onToggle) {
   const mval = el('td', { class: 'st-cell st-mval-cell' });
   const munit = el('td', { class: 'st-cell st-munit-cell' });
   if (m) {
-    mname.textContent = m.name || '';
+    const stepName = row.kind === 'step' ? row.name : row.stepName;
+    mname.textContent = row.kind === 'data' ? (m.name || '') : displayMeasName(m.name, stepName);
     renderValueInto(mval, m.value);
     munit.textContent = m.unit || '';
     if (m.limits && m.limits.text) {
@@ -730,6 +732,78 @@ function renderStepsRow(row, onToggle) {
   tr.appendChild(mval);
   tr.appendChild(munit);
   return tr;
+}
+
+// Generic measurement "names" that are really just datum types. When a
+// TestResult carries one of these, SystemLink shows the step name instead.
+const GENERIC_MEAS_NAMES = new Set([
+  '', 'numeric', 'measurement', 'value', 'string', 'boolean', 'number', 'result', 'numericlimittest',
+]);
+function displayMeasName(measName, stepName) {
+  const n = (measName == null ? '' : String(measName)).trim();
+  if (!n || GENERIC_MEAS_NAMES.has(n.toLowerCase())) return stepName || n;
+  return n;
+}
+
+// Make the steps table columns user-resizable by dragging the header edges.
+let _colResizeCleanup = null;
+function setupResizableColumns(table) {
+  if (_colResizeCleanup) { _colResizeCleanup(); _colResizeCleanup = null; }
+  // Fixed px columns (Status, Elapsed) + flexible fractions summing to 1.
+  const specs = [
+    { flex: 0.28 }, // Steps
+    { px: 64 },     // Status
+    { px: 118 },    // Elapsed time
+    { flex: 0.30 }, // Measurement name
+    { flex: 0.26 }, // Value
+    { flex: 0.16 }, // Unit
+  ];
+  const colgroup = el('colgroup');
+  const colEls = specs.map(() => { const c = el('col'); colgroup.appendChild(c); return c; });
+  table.insertBefore(colgroup, table.firstChild);
+
+  let userAdjusted = false;
+  let widths = [];
+  function computeWidths() {
+    const total = (table.parentElement && table.parentElement.clientWidth) || 900;
+    const fixed = specs.reduce((s, sp) => s + (sp.px || 0), 0);
+    const flexTotal = Math.max(0, total - fixed);
+    return specs.map((sp) => sp.px != null ? sp.px : Math.max(60, Math.round(flexTotal * sp.flex)));
+  }
+  function apply() {
+    colEls.forEach((c, i) => { c.style.width = widths[i] + 'px'; });
+    table.style.width = widths.reduce((a, b) => a + b, 0) + 'px';
+  }
+  widths = computeWidths();
+  apply();
+
+  const ths = table.querySelectorAll('thead th');
+  ths.forEach((th, i) => {
+    if (i >= ths.length - 1) return; // last column has no right handle
+    const handle = el('span', { class: 'col-resize-handle', attrs: { title: 'Drag to resize' } });
+    th.appendChild(handle);
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      userAdjusted = true;
+      const startX = e.clientX;
+      const startW = widths[i];
+      handle.classList.add('active');
+      document.body.classList.add('col-resizing');
+      const onMove = (ev) => { widths[i] = Math.max(48, startW + (ev.clientX - startX)); apply(); };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        handle.classList.remove('active');
+        document.body.classList.remove('col-resizing');
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+
+  const onResize = () => { if (!userAdjusted) { widths = computeWidths(); apply(); } };
+  window.addEventListener('resize', onResize);
+  _colResizeCleanup = () => window.removeEventListener('resize', onResize);
 }
 
 // Render a value into a cell; if it contains base64 image data URIs, show the

@@ -212,22 +212,31 @@ body {
 
 /* steps grid */
 .steps-table-wrap { overflow-x: auto; }
-.steps-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.steps-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 .steps-table thead th {
   position: sticky; top: 0; z-index: 1;
   text-align: left; padding: 9px 12px;
   font-size: 11px; text-transform: uppercase; letter-spacing: .03em; font-weight: 600;
   color: var(--text-muted); background: var(--bg);
   border-bottom: 1px solid transparent; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
+/* Column resize handles (user-adjustable column spacing). */
+.col-resize-handle {
+  position: absolute; top: 0; right: 0; width: 8px; height: 100%;
+  cursor: col-resize; z-index: 2; user-select: none; touch-action: none;
+}
+.col-resize-handle::after {
+  content: ""; position: absolute; top: 25%; right: 3px; width: 1px; height: 50%;
+  background: color-mix(in srgb, var(--ni-nimble-body-font-color) 18%, transparent);
+}
+.col-resize-handle:hover::after, .col-resize-handle.active::after {
+  background: var(--accent); width: 2px; top: 0; height: 100%;
+}
+body.col-resizing { cursor: col-resize; user-select: none; }
 .st-row:hover { background: var(--surface-2); }
 .st-cell { padding: 7px 12px; vertical-align: top; }
-/* Split remaining width evenly across Steps, Measurement name and Value. */
-.steps-table thead th:first-child,
-.steps-table thead th:nth-child(4),
-.steps-table thead th:nth-child(5),
-.st-name-cell, .st-mname-cell, .st-mval-cell { width: 33.33%; }
-.st-name-cell { white-space: nowrap; }
+.st-name-cell { white-space: nowrap; overflow: hidden; }
 .st-name-cell.clickable { cursor: pointer; }
 .st-chev {
   width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
@@ -239,23 +248,23 @@ body {
 .st-name-link { cursor: pointer; }
 .st-name-link:hover { text-decoration: underline; }
 .st-meas .st-name-cell, .st-data .st-name-cell { color: var(--text-muted); }
-.st-status-cell { width: 56px; text-align: center; }
+.st-status-cell { text-align: center; }
 .st-status { display: inline-flex; align-items: center; justify-content: center; }
 .st-status nimble-icon-check,
 .st-status nimble-icon-times,
 .st-status nimble-icon-exclamation-mark { width: 15px; height: 15px; }
 .st-status.done { color: var(--text); }
 .st-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); display: inline-block; }
-.st-time-cell { width: 130px; color: var(--text-muted); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
-.st-mname-cell { color: var(--text); }
+.st-time-cell { color: var(--text); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.st-mname-cell { color: var(--text); word-break: break-word; }
 .st-mval-cell { font-family: var(--mono); word-break: break-word; }
 .st-mval-cell.has-limits { cursor: help; text-decoration: underline dotted var(--border-strong); text-underline-offset: 3px; }
-.st-munit-cell { width: 90px; color: var(--text-muted); }
+.st-munit-cell { color: var(--text); word-break: break-word; }
 .st-mval-cell.has-images { white-space: normal; }
 .st-mval-cell.truncated { cursor: help; }
 .data-img {
   display: inline-block; vertical-align: top; margin: 3px 6px 3px 0;
-  max-width: 280px; max-height: 100px; border-radius: 2px; cursor: zoom-in;
+  max-width: 100%; max-height: 100px; border-radius: 2px; cursor: zoom-in;
   border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 14%, transparent);
 }
 .drawer-table .data-img { max-width: 100%; max-height: 360px; }
