@@ -53,15 +53,14 @@
         <nimble-select id="workspace-select" class="search-select" filter-mode="standard">
           <nimble-list-option value="" selected>All workspaces</nimble-list-option>
         </nimble-select>
-        <nimble-select id="date-filter" class="search-select">
-          <nimble-list-option value="" selected>Any time</nimble-list-option>
-          <nimble-list-option value="3600000">Last hour</nimble-list-option>
-          <nimble-list-option value="86400000">Last 24 hours</nimble-list-option>
-          <nimble-list-option value="604800000">Last 7 days</nimble-list-option>
-          <nimble-list-option value="2592000000">Last 30 days</nimble-list-option>
-          <nimble-list-option value="7776000000">Last 90 days</nimble-list-option>
-          <nimble-list-option value="31536000000">Last year</nimble-list-option>
-        </nimble-select>
+        <button id="date-range-btn" class="date-range-btn" type="button" aria-haspopup="dialog" aria-expanded="false" title="Filter by creation time">
+          <svg class="dr-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="16" rx="2"/>
+            <path d="M3 9h18M8 2.5v4M16 2.5v4"/>
+          </svg>
+          <span id="date-range-label">Any time</span>
+          <span class="dr-caret" aria-hidden="true"></span>
+        </button>
         <button id="refresh-btn" class="icon-btn" type="button" title="Reload files" aria-label="Reload files">
           <nimble-icon-arrow-rotate-right></nimble-icon-arrow-rotate-right>
         </button>
@@ -142,6 +141,55 @@
       <nimble-button id="drawer-close" appearance="ghost">Close</nimble-button>
     </footer>
   </aside>
+
+  <!-- Creation-time range filter dialog -->
+  <dialog id="date-dialog" class="date-range-dialog">
+    <form id="date-dialog-form" method="dialog" class="date-range-form">
+      <div class="date-range-layout">
+        <div class="date-range-absolute">
+          <div class="date-range-title">Absolute time range</div>
+          <label class="date-range-field" for="date-start-input">
+            <span>From</span>
+            <div class="date-range-input-row">
+              <nimble-text-field id="date-start-input" appearance="underline" placeholder="YYYY-MM-DD HH:mm:ss" required></nimble-text-field>
+              <nimble-button id="date-start-pick" appearance="ghost" content-hidden type="button" aria-label="Pick start date and time" title="Pick start date and time">
+                <svg slot="start" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>
+                Pick start date and time
+              </nimble-button>
+              <input id="date-start-native" class="date-range-native" type="datetime-local" tabindex="-1" aria-hidden="true">
+            </div>
+          </label>
+          <label class="date-range-field" for="date-end-input">
+            <span>To</span>
+            <div class="date-range-input-row">
+              <nimble-text-field id="date-end-input" appearance="underline" placeholder="YYYY-MM-DD HH:mm:ss" required></nimble-text-field>
+              <nimble-button id="date-end-pick" appearance="ghost" content-hidden type="button" aria-label="Pick end date and time" title="Pick end date and time">
+                <svg slot="start" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>
+                Pick end date and time
+              </nimble-button>
+              <input id="date-end-native" class="date-range-native" type="datetime-local" tabindex="-1" aria-hidden="true">
+            </div>
+          </label>
+          <div class="date-range-actions">
+            <nimble-button id="date-apply" appearance="block" appearance-variant="primary" type="submit">Apply time range</nimble-button>
+          </div>
+        </div>
+        <aside class="date-range-quick" aria-label="Quick ranges">
+          <div class="date-range-title">Quick ranges</div>
+          <div class="date-range-quick-list">
+            <button class="date-quick-btn" data-range="all" type="button">Any time</button>
+            <button class="date-quick-btn" data-range="1h" type="button">Last hour</button>
+            <button class="date-quick-btn" data-range="24h" type="button">Last 24 hours</button>
+            <button class="date-quick-btn" data-range="7d" type="button">Last 7 days</button>
+            <button class="date-quick-btn" data-range="30d" type="button">Last 30 days</button>
+            <button class="date-quick-btn" data-range="90d" type="button">Last 90 days</button>
+            <button class="date-quick-btn" data-range="180d" type="button">Last 6 months</button>
+            <button class="date-quick-btn" data-range="365d" type="button">Last year</button>
+          </div>
+        </aside>
+      </div>
+    </form>
+  </dialog>
 
   <!-- Upload files slide-out -->
   <div id="upload-backdrop" class="drawer-backdrop"></div>

@@ -18,7 +18,9 @@ const state = {
   selectedId: null,
   search: '',
   workspace: '',
-  dateFilter: '',       // lookback window in ms ('' = any time)
+  timeMode: 'preset',   // 'preset' | 'custom'
+  timeValue: 'all',     // preset key (see TIME_PRESETS)
+  timeCustom: null,     // { start: Date, end: Date }
   sort: { key: 'created', dir: 'desc' },
   workspaceNames: {},   // id -> name
   currentFile: null,    // metadata of the file currently open
@@ -108,12 +110,11 @@ async function loadFiles() {
 // Apply the client-side creation-date filter and current sort, then render.
 function applyAndRender() {
   let files = state.allFiles.slice();
-  const ms = Number(state.dateFilter);
-  if (ms > 0) {
-    const cutoff = Date.now() - ms;
+  const range = getActiveTimeRange();
+  if (range) {
     files = files.filter((f) => {
       const t = new Date(f.created || f.updated).getTime();
-      return !isNaN(t) && t >= cutoff;
+      return !isNaN(t) && t >= range.start.getTime() && t <= range.end.getTime();
     });
   }
   files.sort(fileComparator(state.sort));
@@ -188,6 +189,177 @@ function onSearchInput(value) {
   state.search = (value || '').trim();
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => loadFiles(), 300);
+}
+
+/* ---------- Creation-time range filter ----------
+ * Advanced time filter (adapted from the Kanban board web app): a trigger
+ * button opens a popup with an absolute custom range plus quick presets.
+ * Filtering is client-side over the fetched file set. */
+const TIME_PRESETS = {
+  all: 'Any time',
+  '1h': 'Last hour',
+  '24h': 'Last 24 hours',
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  '90d': 'Last 90 days',
+  '180d': 'Last 6 months',
+  '365d': 'Last year',
+};
+const DEFAULT_TIME = 'all';
+
+function getRelativeDateStart(value, ref = new Date()) {
+  if (!value || value === 'all') return null;
+  const m = String(value).match(/^(\d+)([mhdwy])$/i);
+  if (!m) return null;
+  const amount = parseInt(m[1], 10);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const per = { m: 6e4, h: 36e5, d: 864e5, w: 6048e5, y: 31536e6 }[m[2].toLowerCase()];
+  if (!per) return null;
+  return new Date(ref.getTime() - amount * per);
+}
+
+function getActiveTimeRange() {
+  if (state.timeMode === 'custom' && state.timeCustom && state.timeCustom.start && state.timeCustom.end) {
+    return state.timeCustom;
+  }
+  const start = getRelativeDateStart(state.timeValue || DEFAULT_TIME);
+  if (!start) return null;
+  return { start, end: new Date() };
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function formatDateTimeLocal(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function formatDateTimeFieldValue(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+function parseDateTimeFieldValue(value) {
+  const raw = (value || '').trim();
+  if (!raw) return null;
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+function formatDisplayDateTime(d) {
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function updateDateButton() {
+  const label = $('#date-range-label');
+  updateQuickRangeState();
+  if (state.timeMode === 'custom' && state.timeCustom) {
+    label.textContent = `${formatDisplayDateTime(state.timeCustom.start)} – ${formatDisplayDateTime(state.timeCustom.end)}`;
+    $('#date-range-btn').title = `${state.timeCustom.start.toLocaleString()} to ${state.timeCustom.end.toLocaleString()}`;
+    return;
+  }
+  label.textContent = TIME_PRESETS[state.timeValue] || TIME_PRESETS[DEFAULT_TIME];
+  $('#date-range-btn').title = 'Filter by creation time';
+}
+
+function updateQuickRangeState() {
+  const activeValue = state.timeMode === 'preset' ? (state.timeValue || DEFAULT_TIME) : null;
+  $('#date-dialog').querySelectorAll('.date-quick-btn').forEach((btn) => {
+    const isActive = activeValue != null && btn.dataset.range === activeValue;
+    btn.classList.toggle('is-active', isActive);
+    if (isActive) btn.setAttribute('aria-current', 'true'); else btn.removeAttribute('aria-current');
+  });
+}
+
+function openDateDialog() {
+  const dialog = $('#date-dialog');
+  if (dialog.open) { closeDateDialog(); return; }
+  const now = new Date();
+  const fallbackStart = getRelativeDateStart(state.timeValue || DEFAULT_TIME, now) || new Date(now.getTime() - 30 * 864e5);
+  const startDate = (state.timeCustom && state.timeCustom.start) || fallbackStart;
+  const endDate = (state.timeCustom && state.timeCustom.end) || now;
+  $('#date-start-input').value = formatDateTimeFieldValue(startDate);
+  $('#date-end-input').value = formatDateTimeFieldValue(endDate);
+  $('#date-start-native').value = formatDateTimeLocal(startDate);
+  $('#date-end-native').value = formatDateTimeLocal(endDate);
+  updateQuickRangeState();
+  dialog.show();
+  positionDateDialog();
+  $('#date-range-btn').setAttribute('aria-expanded', 'true');
+}
+function closeDateDialog() {
+  const dialog = $('#date-dialog');
+  if (dialog.open) dialog.close();
+  $('#date-range-btn').setAttribute('aria-expanded', 'false');
+}
+function positionDateDialog() {
+  const margin = 12;
+  const dialog = $('#date-dialog');
+  const triggerRect = $('#date-range-btn').getBoundingClientRect();
+  dialog.style.position = 'fixed';
+  dialog.style.margin = '0';
+  dialog.style.maxWidth = `${Math.max(320, window.innerWidth - margin * 2)}px`;
+  const rect = dialog.getBoundingClientRect();
+  const left = Math.min(Math.max(triggerRect.left, margin), Math.max(margin, window.innerWidth - rect.width - margin));
+  const top = Math.min(Math.max(triggerRect.bottom + 6, margin), Math.max(margin, window.innerHeight - rect.height - margin));
+  dialog.style.left = `${Math.round(left)}px`;
+  dialog.style.top = `${Math.round(top)}px`;
+}
+function onDatePointerDown(e) {
+  const dialog = $('#date-dialog');
+  if (!dialog.open) return;
+  if (dialog.contains(e.target) || $('#date-range-btn').contains(e.target)) return;
+  closeDateDialog();
+}
+function onDateViewportChange() { if ($('#date-dialog').open) positionDateDialog(); }
+function openNativePicker(input) {
+  if (!input) return;
+  if (typeof input.showPicker === 'function') { input.showPicker(); return; }
+  input.focus(); input.click();
+}
+function syncTextFromNative(nativeInput, textField) {
+  const parsed = parseDateTimeFieldValue(nativeInput.value);
+  if (parsed) textField.value = formatDateTimeFieldValue(parsed);
+}
+function syncNativeFromText(textField, nativeInput) {
+  const parsed = parseDateTimeFieldValue(textField.value);
+  if (!parsed) return;
+  nativeInput.value = formatDateTimeLocal(parsed);
+  textField.value = formatDateTimeFieldValue(parsed);
+}
+function applyQuickRange(value) {
+  state.timeMode = 'preset';
+  state.timeValue = value || DEFAULT_TIME;
+  state.timeCustom = null;
+  updateDateButton();
+  closeDateDialog();
+  applyAndRender();
+}
+function applyCustomRange(e) {
+  e.preventDefault();
+  const start = parseDateTimeFieldValue($('#date-start-input').value);
+  const end = parseDateTimeFieldValue($('#date-end-input').value);
+  if (!start || !end) { setFileStatus('Please enter a valid creation time range.', true); return; }
+  if (end < start) { setFileStatus('The end of the range must be after the start.', true); return; }
+  state.timeMode = 'custom';
+  state.timeCustom = { start, end };
+  updateDateButton();
+  closeDateDialog();
+  applyAndRender();
+}
+
+function wireDateFilter() {
+  $('#date-range-btn').addEventListener('click', openDateDialog);
+  $('#date-dialog-form').addEventListener('submit', applyCustomRange);
+  $('#date-dialog').addEventListener('cancel', closeDateDialog);
+  document.addEventListener('mousedown', onDatePointerDown);
+  window.addEventListener('resize', onDateViewportChange);
+  window.addEventListener('scroll', onDateViewportChange, true);
+  $('#date-start-pick').addEventListener('click', () => openNativePicker($('#date-start-native')));
+  $('#date-end-pick').addEventListener('click', () => openNativePicker($('#date-end-native')));
+  $('#date-start-native').addEventListener('input', () => syncTextFromNative($('#date-start-native'), $('#date-start-input')));
+  $('#date-end-native').addEventListener('input', () => syncTextFromNative($('#date-end-native'), $('#date-end-input')));
+  $('#date-start-input').addEventListener('change', () => syncNativeFromText($('#date-start-input'), $('#date-start-native')));
+  $('#date-end-input').addEventListener('change', () => syncNativeFromText($('#date-end-input'), $('#date-end-native')));
+  $('#date-dialog').querySelectorAll('.date-quick-btn').forEach((btn) => {
+    btn.addEventListener('click', () => applyQuickRange(btn.dataset.range || DEFAULT_TIME));
+  });
+  updateDateButton();
 }
 
 function setSortColumn(key) {
@@ -1580,7 +1752,7 @@ function init() {
   disableSuggestions($('#file-search'));
   $('#refresh-btn').addEventListener('click', () => loadFiles());
   $('#workspace-select').addEventListener('change', (e) => { state.workspace = e.target.value; loadFiles(); });
-  $('#date-filter').addEventListener('change', (e) => { state.dateFilter = e.target.value; applyAndRender(); });
+  wireDateFilter();
 
   $('#nav-search').addEventListener('click', showSearchPage);
   $('#back-to-files').addEventListener('click', showSearchPage);
@@ -1598,7 +1770,7 @@ function init() {
   $('#dtab-info').addEventListener('click', () => setDrawerTab('info'));
   $('#dtab-data').addEventListener('click', () => setDrawerTab('data'));
   $('#img-lightbox').addEventListener('click', closeImageLightbox);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImageLightbox(); closeStepDetails(); closeUploadDrawer(); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDateDialog(); closeImageLightbox(); closeStepDetails(); closeUploadDrawer(); } });
 
   wireUploadDrawer();
 
