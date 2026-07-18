@@ -403,8 +403,10 @@ function renderFileTable() {
     const tr = el('tr', { class: 'file-row' + (f.id === state.selectedId ? ' selected' : '') });
     tr.tabIndex = 0;
     const nameTd = el('td', { class: 'ft-name' });
-    nameTd.appendChild(el('span', { class: 'file-ext xml', text: fileExt(f) || 'file' }));
-    nameTd.appendChild(el('span', { class: 'ft-name-text', text: fileName(f), attrs: { title: fileName(f) } }));
+    const nameInner = el('div', { class: 'ft-name-inner' });
+    nameInner.appendChild(el('span', { class: 'file-ext xml', text: fileExt(f) || 'file' }));
+    nameInner.appendChild(el('span', { class: 'ft-name-text', text: fileName(f), attrs: { title: fileName(f) } }));
+    nameTd.appendChild(nameInner);
     tr.appendChild(nameTd);
     tr.appendChild(el('td', { text: fileExt(f) || '\u2014' }));
     tr.appendChild(el('td', { text: formatDate(f.created || f.updated) }));
