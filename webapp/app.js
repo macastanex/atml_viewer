@@ -943,11 +943,15 @@ function flattenRows(nodes) {
       const id = ++seq;
       const meas = node.measurements || [];
       const data = node.data || [];
-      // Show the first measurement inline on the step row; any additional
-      // measurements are shown as their own rows just below it (matching the
-      // SystemLink steps view). Only child steps make a step collapsible.
-      const first = meas.length ? meas[0] : null;
-      const extra = meas.slice(1);
+      // Unify measurements and data items into one ordered detail list. The
+      // first detail is shown inline on the step row; any additional details
+      // are shown as their own rows just below it (SystemLink steps view).
+      const details = [
+        ...meas.map((m) => ({ kind: 'meas', measurement: m })),
+        ...data.map((d) => ({ kind: 'data', dataItem: d })),
+      ];
+      const firstDetail = details.length ? details[0] : null;
+      const extraDetails = details.slice(1);
       const expandable = node.children.length > 0;
       const searchText = (
         node.name + ' ' +
@@ -957,10 +961,11 @@ function flattenRows(nodes) {
       rows.push({
         id, parent: parentId, depth, kind: 'step',
         name: node.name, outcome: node.outcome, time: node.time,
-        stepType: node.stepType, measurement: first, measCount: meas.length, expandable, searchText, node,
+        stepType: node.stepType, detail: firstDetail, expandable, searchText, node,
       });
-      for (const m of extra) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'meas', measurement: m, stepName: node.name });
-      for (const d of data) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'data', dataItem: d });
+      for (const d of extraDetails) {
+        rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: d.kind, measurement: d.measurement, dataItem: d.dataItem, stepName: node.name });
+      }
       walk(node.children, depth + 1, id);
     }
   };
@@ -1000,16 +1005,28 @@ function renderStepsRow(row, onToggle) {
   const timeText = (row.kind === 'step' && row.time != null && !isNaN(row.time)) ? formatSeconds(row.time) : '';
   tr.appendChild(el('td', { class: 'st-cell st-time-cell', text: timeText }));
 
-  // Measurement name / value / unit
-  const m = row.kind === 'data'
-    ? { name: row.dataItem.key, value: row.dataItem.value, unit: '' }
-    : row.measurement;
+  // Measurement name / value / unit. A step row shows its first detail inline
+  // (measurement or data); extra-detail rows carry their own measurement/data.
+  let m = null;
+  let isData = false;
+  if (row.kind === 'step') {
+    const det = row.detail;
+    if (det) {
+      isData = det.kind === 'data';
+      m = isData ? { name: det.dataItem.key, value: det.dataItem.value, unit: '' } : det.measurement;
+    }
+  } else if (row.kind === 'data') {
+    isData = true;
+    m = { name: row.dataItem.key, value: row.dataItem.value, unit: '' };
+  } else {
+    m = row.measurement;
+  }
   const mname = el('td', { class: 'st-cell st-mname-cell' });
   const mval = el('td', { class: 'st-cell st-mval-cell' });
   const munit = el('td', { class: 'st-cell st-munit-cell' });
   if (m) {
     const stepName = row.kind === 'step' ? row.name : row.stepName;
-    mname.textContent = row.kind === 'data' ? (m.name || '') : displayMeasName(m.name, stepName);
+    mname.textContent = isData ? (m.name || '') : displayMeasName(m.name, stepName);
     renderMeasValue(mval, m);
     munit.textContent = m.unit || '';
     if (m.limits && m.limits.text) {
