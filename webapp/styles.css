@@ -64,7 +64,7 @@ body {
 .header-btn {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 16px; border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 20%, transparent);
-  border-radius: 4px; background: transparent; color: var(--text);
+  border-radius: 0; background: transparent; color: var(--text);
   cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600;
   transition: background .12s, border-color .12s;
 }
@@ -78,7 +78,7 @@ body {
 
 .icon-btn {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border: 1px solid transparent; border-radius: 6px;
+  width: 36px; height: 36px; border: 1px solid transparent; border-radius: 0;
   background: transparent; color: var(--text); cursor: pointer;
 }
 .icon-btn:hover { background: var(--surface-2); }
@@ -140,7 +140,7 @@ body {
 .date-range-quick-list { display: flex; flex-direction: column; gap: 4px; }
 .date-quick-btn {
   border: none; background: transparent; color: var(--text); font-family: inherit; font-size: 13px;
-  text-align: left; padding: 7px 10px; border-radius: 2px; width: 100%; cursor: pointer;
+  text-align: left; padding: 7px 10px; border-radius: 0; width: 100%; cursor: pointer;
 }
 .date-quick-btn:hover { background: var(--surface-2); }
 .date-quick-btn.is-active {
@@ -402,7 +402,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .dz-primary { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
 .dz-or { margin: 0 0 12px; color: var(--text-muted); font-size: 13px; }
 .dz-browse {
-  padding: 7px 16px; border: 1px solid rgba(128, 128, 128, .45); border-radius: var(--radius);
+  padding: 7px 16px; border: 1px solid rgba(128, 128, 128, .45); border-radius: 0;
   background: transparent; color: var(--text); cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600;
 }
 .dz-browse:hover { background: var(--surface-2); border-color: var(--accent); }
