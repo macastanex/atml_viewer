@@ -941,10 +941,12 @@ function flattenRows(nodes) {
       const id = ++seq;
       const meas = node.measurements || [];
       const data = node.data || [];
-      // A single measurement is shown inline on the step row; when a step has
-      // multiple measurements they are only shown in the step details drawer.
-      const single = meas.length === 1 ? meas[0] : null;
-      const expandable = (data.length + node.children.length) > 0;
+      // Show the first measurement inline on the step row; any additional
+      // measurements are shown as their own rows just below it (matching the
+      // SystemLink steps view). Only child steps make a step collapsible.
+      const first = meas.length ? meas[0] : null;
+      const extra = meas.slice(1);
+      const expandable = node.children.length > 0;
       const searchText = (
         node.name + ' ' +
         meas.map((m) => `${m.name} ${m.value} ${m.unit}`).join(' ') + ' ' +
@@ -953,8 +955,9 @@ function flattenRows(nodes) {
       rows.push({
         id, parent: parentId, depth, kind: 'step',
         name: node.name, outcome: node.outcome, time: node.time,
-        stepType: node.stepType, measurement: single, measCount: meas.length, expandable, searchText, node,
+        stepType: node.stepType, measurement: first, measCount: meas.length, expandable, searchText, node,
       });
+      for (const m of extra) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'meas', measurement: m, stepName: node.name });
       for (const d of data) rows.push({ id: ++seq, parent: id, depth: depth + 1, kind: 'data', dataItem: d });
       walk(node.children, depth + 1, id);
     }
@@ -1011,11 +1014,6 @@ function renderStepsRow(row, onToggle) {
       mval.classList.add('has-limits');
       mval.title = `Limits: ${m.limits.text}`;
     }
-  } else if (row.kind === 'step' && row.measCount > 1) {
-    // Multiple measurements live in the step details drawer; show a link.
-    const more = el('span', { class: 'st-meas-more', text: `${row.measCount} measurements`, attrs: { title: 'View step details' } });
-    more.addEventListener('click', (e) => { e.stopPropagation(); openStepDetails(row.node); });
-    mname.appendChild(more);
   }
   tr.appendChild(mname);
   tr.appendChild(mval);
