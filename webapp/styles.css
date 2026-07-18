@@ -270,7 +270,7 @@ body {
 }
 .steps-count { font: var(--ni-nimble-group-header-font); font-weight: 600; }
 .steps-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.steps-tools nimble-text-field { min-width: 200px; }
+.steps-tools nimble-text-field { min-width: 300px; }
 .filter-group { display: inline-flex; gap: 0; }
 
 /* summary cards (compact, inline in the steps toolbar — click to filter) */
