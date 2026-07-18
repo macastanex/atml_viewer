@@ -367,7 +367,8 @@ function setSortColumn(key) {
     state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
   } else {
     state.sort.key = key;
-    state.sort.dir = key === 'name' || key === 'ext' || key === 'workspace' ? 'asc' : 'desc';
+    // Text columns default to ascending; date/size default to descending.
+    state.sort.dir = (key === 'name' || key === 'ext' || key === 'workspace') ? 'asc' : 'desc';
   }
   updateSortIndicators();
   applyAndRender();
@@ -377,10 +378,9 @@ function updateSortIndicators() {
   document.querySelectorAll('#file-table th.sortable').forEach((th) => {
     const active = th.dataset.sort === state.sort.key;
     th.classList.toggle('sorted', active);
+    th.classList.toggle('desc', active && state.sort.dir === 'desc');
+    th.classList.toggle('asc', active && state.sort.dir === 'asc');
     th.setAttribute('aria-sort', active ? (state.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
-    let ind = th.querySelector('.sort-ind');
-    if (!ind) { ind = el('span', { class: 'sort-ind' }); th.appendChild(ind); }
-    ind.textContent = active ? (state.sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
   });
 }
 
@@ -405,10 +405,10 @@ function renderFileTable() {
     nameTd.appendChild(el('span', { class: 'file-ext xml', text: fileExt(f) || 'file' }));
     nameTd.appendChild(el('span', { class: 'ft-name-text', text: fileName(f), attrs: { title: fileName(f) } }));
     tr.appendChild(nameTd);
-    tr.appendChild(el('td', { text: fileExt(f) || '—' }));
+    tr.appendChild(el('td', { text: fileExt(f) || '\u2014' }));
     tr.appendChild(el('td', { text: formatDate(f.created || f.updated) }));
     tr.appendChild(el('td', { class: 'ft-num', text: formatSize(f.size ?? f.size64) }));
-    tr.appendChild(el('td', { text: state.workspaceNames[f.workspace] || '—' }));
+    tr.appendChild(el('td', { text: state.workspaceNames[f.workspace] || '\u2014' }));
     tr.addEventListener('click', () => selectFile(f));
     tr.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectFile(f); } });
     tbody.appendChild(tr);
