@@ -143,9 +143,10 @@ function fileComparator(sort) {
   };
 }
 
-// Global XML search/browse via Elasticsearch (all workspaces), newest first.
+// Global ATML/XML search/browse via Elasticsearch (all workspaces), newest
+// first. ATML reports may use either an .xml or .atml extension.
 async function elasticXmlSearch(text) {
-  const clauses = ['extension: "xml"'];
+  const clauses = ['(extension: "xml" OR extension: "atml")'];
   if (text) {
     const safe = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     clauses.push(`name: "*${safe}*"`);
@@ -160,7 +161,7 @@ async function elasticXmlSearch(text) {
   return data.availableFiles || data.files || data.value || [];
 }
 
-// All XML files in a specific workspace (scoped via the workspace query param).
+// All XML/ATML files in a specific workspace (scoped via the workspace query param).
 async function queryWorkspaceXml(workspaceId) {
   const xml = [];
   let skip = 0;
@@ -177,7 +178,7 @@ async function queryWorkspaceXml(workspaceId) {
     total = data.totalCount != null ? data.totalCount : skip + items.length;
     if (!items.length) break;
     skip += items.length;
-    for (const f of items) if (fileExt(f) === 'xml') xml.push(f);
+    for (const f of items) { const ext = fileExt(f); if (ext === 'xml' || ext === 'atml') xml.push(f); }
     if (skip >= 5000) break; // safety cap for very large workspaces
   }
   return xml;
