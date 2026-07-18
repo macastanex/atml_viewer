@@ -91,8 +91,9 @@ body {
   border-bottom: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 10%, transparent);
   flex-wrap: wrap;
 }
-.search-input { flex: 1 1 340px; min-width: 240px; max-width: 520px; }
+.search-input { flex: 0 1 340px; min-width: 200px; max-width: 520px; }
 .search-select { flex: 0 0 auto; min-width: 190px; }
+.ws-select { margin-right: auto; }
 
 /* Creation-time range filter (button + popup) */
 .date-range-btn {
@@ -114,9 +115,11 @@ body {
   width: fit-content; max-width: min(760px, calc(100vw - 28px));
   border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 16%, transparent);
   border-radius: var(--radius); padding: 0;
-  background: var(--surface); color: var(--text);
+  background-color: #ffffff; color: var(--text);
   box-shadow: 0 14px 40px rgba(0, 0, 0, .3); z-index: 250;
 }
+#theme-provider[theme="dark"] .date-range-dialog,
+#theme-provider[theme="color"] .date-range-dialog { background-color: #2a2b2d; }
 .date-range-dialog::backdrop { background: transparent; }
 .date-range-form { display: flex; flex-direction: column; padding: 14px; }
 .date-range-layout { display: grid; grid-template-columns: max-content 210px; align-items: start; }
