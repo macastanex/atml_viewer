@@ -618,9 +618,8 @@ function renderAtml(doc, container) {
   // File metadata / properties first.
   const file = state.currentFile;
   if (file) {
-    header.appendChild(el('div', { class: 'rh-group-title', text: 'File' }));
+    header.appendChild(el('div', { class: 'rh-group-title', text: 'File Details' }));
     const ff = el('div', { class: 'rh-fields' });
-    addField(ff, 'Name', fileName(file));
     addField(ff, 'Size', formatSize(file.size ?? file.size64));
     addField(ff, 'Created', formatDate(file.created) || '--');
     addField(ff, 'Updated', formatDate(file.updated) || '--');
