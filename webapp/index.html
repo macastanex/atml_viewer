@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ATML Viewer</title>
+  <title>ATML File Manager</title>
   <link rel="stylesheet" href="nimble/fonts/css/fonts.css" />
   <link rel="stylesheet" href="styles.css" />
   <script src="nimble/all-components-bundle.min.js"></script>
@@ -20,8 +20,8 @@
         <path d="M8.5 13.5l2 2 4-4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <div>
-        <h1>ATML Viewer</h1>
-        <p class="subtitle">Browse SystemLink files and inspect ATML test results</p>
+        <h1>ATML File Manager</h1>
+        <p class="subtitle">Browse SystemLink files, import ATML data, and inspect ATML test results</p>
       </div>
     </div>
     <div class="header-actions">
@@ -32,13 +32,13 @@
         </svg>
         <span>Search files</span>
       </button>
-      <button id="nav-import" class="header-btn" type="button" title="Import a new file">
+      <button id="nav-import" class="header-btn" type="button" title="Import ATML data">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 15V3"/>
           <path d="M7 8l5-5 5 5"/>
           <path d="M4 20h16"/>
         </svg>
-        <span>Import file</span>
+        <span>Import ATML Data</span>
       </button>
     </div>
   </header>
@@ -205,8 +205,8 @@
         <p class="dz-primary">Drag files here</p>
         <p class="dz-or">or</p>
         <button id="dz-browse" class="dz-browse" type="button">Browse for files</button>
-        <input id="file-input" type="file" accept=".xml,text/xml,application/xml" multiple hidden />
-        <p class="dz-hint">XML files only</p>
+        <input id="file-input" type="file" accept=".xml,.atml,text/xml,application/xml" multiple hidden />
+        <p class="dz-hint">ATML files (.xml or .atml)</p>
       </div>
 
       <table class="upload-list">

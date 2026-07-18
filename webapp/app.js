@@ -1641,7 +1641,7 @@ function closeUploadDrawer() {
 }
 
 function isXmlFile(file) {
-  return /\.xml$/i.test(file.name) || file.type === 'text/xml' || file.type === 'application/xml';
+  return /\.(xml|atml)$/i.test(file.name) || file.type === 'text/xml' || file.type === 'application/xml';
 }
 
 function addUploadFiles(fileList) {
@@ -1728,9 +1728,10 @@ async function runUpload() {
     renderUploadRows();
     loadFiles();
   } else if (succeeded.length > 0) {
-    // Multiple uploads: refresh the search list and let the user pick.
+    // Multiple files: do not open the viewer — just refresh the search list so
+    // the imported files appear, and leave the drawer open showing results.
     loadFiles();
-    $('#upload-ok').disabled = false;
+    renderUploadRows();
   }
 }
 
