@@ -804,6 +804,7 @@ function buildNode(child) {
   const ln = child.localName || '';
   const params = extractParameters(child);
   const results = extractResults(child);
+  const oEl = firstChildByLocal(child, 'Outcome') || firstChildByLocal(child, 'ActionOutcome');
   // Report text may also arrive as a Data collection item named "ReportText".
   const details = results.details.slice();
   const data = [];
@@ -821,7 +822,8 @@ function buildNode(child) {
     id: attr(child, 'ID'),
     start: attr(child, 'startDateTime'),
     end: attr(child, 'endDateTime'),
-    outcome: outcomeOf(child),
+    outcome: oEl ? attr(oEl, 'value') : null,
+    outcomeQualifier: oEl ? attr(oEl, 'qualifier') : null,
     stepType: stepType(child),
     time: stepTime(child),
     children: buildStepTree(child),
@@ -1765,28 +1767,27 @@ function addUploadFiles(fileList) {
   for (const file of Array.from(fileList)) {
     if (!isXmlFile(file)) continue;
     if (uploadQueue.some((q) => q.file.name === file.name && q.file.size === file.size)) continue;
-    uploadQueue.push({ file, state: 'ready', id: null, error: null });
+    uploadQueue.push({ file, state: 'ready', detail: '', fileId: null, resultId: null });
     added++;
   }
   renderUploadRows();
   return added;
 }
 
+const UL_STATE_LABEL = {
+  ready: 'Ready', working: 'Working…', created: 'Created', replaced: 'Replaced',
+  skipped: 'Skipped', uploaded: 'Uploaded', error: 'Error',
+};
+
 function renderUploadRows() {
   const tbody = $('#upload-rows');
   tbody.innerHTML = '';
-  const wsId = $('#upload-workspace').value;
-  const wsName = state.workspaceNames[wsId] || 'Default';
   for (const q of uploadQueue) {
     const tr = el('tr');
     tr.appendChild(el('td', { class: 'ul-name', text: q.file.name, attrs: { title: q.file.name } }));
-    tr.appendChild(el('td', { text: wsName }));
     tr.appendChild(el('td', { class: 'ft-num', text: formatSize(q.file.size) }));
-    const stateTd = el('td', { class: 'ul-state ' + q.state });
-    stateTd.textContent = q.state === 'ready' ? 'Ready'
-      : q.state === 'uploading' ? 'Uploading…'
-        : q.state === 'done' ? 'Uploaded'
-          : (q.error || 'Failed');
+    const stateTd = el('td', { class: 'ul-state ' + q.state, text: UL_STATE_LABEL[q.state] || q.state });
+    if (q.detail) stateTd.title = q.detail;
     tr.appendChild(stateTd);
     tbody.appendChild(tr);
   }
@@ -1812,41 +1813,264 @@ async function uploadFileToService(file, workspaceId) {
   return id;
 }
 
+/* ---------- Create result data (ATML → SystemLink Test Monitor) ---------- */
+const TM_API = '/nitestmonitor/v2';
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function tmPost(path, body, expectJson = true) {
+  const res = await fetch(`${TM_API}/${path}`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Test Monitor request '${path}' failed (${res.status}).`);
+  if (!expectJson || res.status === 204) return {};
+  return res.json().catch(() => ({}));
+}
+async function tmCreateResult(resultRequest) {
+  const data = await tmPost('results', { results: [resultRequest] });
+  const r = (data.results && data.results[0]) || null;
+  if (!r || !r.id) throw new Error('Failed to create test result.');
+  return r.id;
+}
+async function tmCreateSteps(steps) {
+  return tmPost('steps', { steps, updateResultTotalTime: true });
+}
+async function findResultsByChecksum(checksum) {
+  const data = await tmPost('query-results', {
+    filter: 'properties["ATML Checksum"] == @0', substitutions: [checksum], take: 100, returnCount: true,
+  });
+  return data.results || [];
+}
+async function tmDeleteResults(ids) {
+  if (!ids.length) return;
+  await tmPost('delete-results', { ids }, false);
+}
+async function findFilesByChecksum(checksum) {
+  try {
+    const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
+      method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filter: `properties["ATML Checksum"]: "${checksum}"`, take: 100 }),
+    });
+    const data = await res.json();
+    return (data.availableFiles || data.files || []).map((f) => f.id);
+  } catch { return []; }
+}
+async function deleteFiles(ids) {
+  if (!ids.length) return;
+  await apiGet(`${FILE_API}/service-groups/Default/delete-files`, {
+    method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+}
+async function updateFileMetadata(fileId, properties) {
+  await apiGet(`${FILE_API}/service-groups/Default/files/${encodeURIComponent(fileId)}/update-metadata`, {
+    method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replaceExisting: false, properties }),
+  });
+}
+
+function toIso(dt) {
+  if (dt) { const d = new Date(dt); if (!isNaN(d)) return d.toISOString(); }
+  return new Date().toISOString();
+}
+function strOrEmpty(v) { return v == null ? '' : String(v); }
+
+// Map an ATML outcome (+qualifier) to a Test Monitor status object.
+const ATML_STATUS = {
+  passed: { statusType: 'PASSED', statusName: 'Passed' },
+  failed: { statusType: 'FAILED', statusName: 'Failed' },
+  done: { statusType: 'DONE', statusName: 'Done' },
+  errored: { statusType: 'ERRORED', statusName: 'Errored' },
+  error: { statusType: 'ERRORED', statusName: 'Errored' },
+  terminated: { statusType: 'TERMINATED', statusName: 'Terminated' },
+  skipped: { statusType: 'SKIPPED', statusName: 'Skipped' },
+  notstarted: { statusType: 'SKIPPED', statusName: 'Skipped' },
+  running: { statusType: 'RUNNING', statusName: 'Running' },
+  'timed out': { statusType: 'TIMED_OUT', statusName: 'Timed Out' },
+};
+function statusObjectFor(node) {
+  let s = (node.outcome || '').trim().toLowerCase();
+  if (s === 'aborted' || s === 'userdefined') s = (node.outcomeQualifier || '').trim().toLowerCase();
+  return ATML_STATUS[s] || { statusType: 'DONE', statusName: node.outcome || 'Done' };
+}
+
+function extractPartNumber(results) {
+  const idn = firstByLocal(results, 'IdentificationNumber');
+  const num = idn ? attr(idn, 'number') : null;
+  return num || null;
+}
+
+// Build a Test Monitor result request + step-builder from a parsed ATML doc,
+// reusing the same node tree the viewer renders.
+function buildResultAndSteps(doc, opts) {
+  const results = firstByLocal(doc, 'TestResults') || doc.documentElement;
+  const resultSet = firstByLocal(results, 'ResultSet');
+  const rootNode = buildResultSetRootNode(resultSet);
+
+  const operator = attr(firstByLocal(results, 'SystemOperator'), 'name') || null;
+  const uutEl = firstChildByLocal(results, 'UUT');
+  const serial = textOf(firstByLocal(uutEl || results, 'SerialNumber')) || null;
+  const stationSerial = textOf(firstByLocal(firstChildByLocal(results, 'TestStation') || results, 'SerialNumber')) || null;
+  const partNumber = extractPartNumber(results);
+  const rootStatus = statusObjectFor(rootNode);
+
+  const resultRequest = {
+    programName: attr(resultSet, 'name') || 'ATML Result',
+    status: rootStatus,
+    systemId: stationSerial || undefined,
+    hostName: stationSerial || undefined,
+    properties: { 'ATML Checksum': opts.checksum },
+    keywords: ['ATML File Manager'],
+    serialNumber: serial || undefined,
+    operator: operator || undefined,
+    partNumber: partNumber || undefined,
+    startedAt: toIso(rootNode.start),
+    totalTimeInSeconds: (rootNode.time != null && !isNaN(rootNode.time)) ? rootNode.time : 0,
+    workspace: opts.workspaceId || undefined,
+    fileIds: opts.fileId ? [opts.fileId] : undefined,
+  };
+
+  function buildStepRequest(node, resultId, parentId, stepId) {
+    const status = statusObjectFor(node);
+    const params = [];
+    for (const m of (node.measurements || [])) {
+      const p = { name: displayMeasName(m.name, node.name), status: status.statusName };
+      if (m.value != null && m.value !== '') p.measurement = String(m.value);
+      if (m.unit) p.units = m.unit;
+      const lim = m.limits || {};
+      if (lim.low != null) p.lowLimit = String(lim.low);
+      if (lim.high != null) p.highLimit = String(lim.high);
+      if (lim.comparator) p.comparisonType = lim.comparator === 'CIEQ' ? 'IgnoreCase' : lim.comparator;
+      params.push(p);
+    }
+    if (!params.length) params.push({ name: node.name, status: status.statusName });
+    const inputs = (node.inputs || []).map((i) => ({ name: i.name, value: strOrEmpty(i.value) }));
+    const outputs = (node.outputs || []).map((o) => ({ name: o.name, value: strOrEmpty(o.value) }));
+    const reportText = (node.details || []).map(String).join('\n');
+    return {
+      stepId, parentId, resultId,
+      name: node.name,
+      stepType: node.stepType || node.kind || 'Test',
+      status,
+      startedAt: toIso(node.start),
+      totalTimeInSeconds: (node.time != null && !isNaN(node.time)) ? node.time : 0,
+      dataModel: 'TestStand',
+      data: { text: reportText, parameters: params },
+      inputs: inputs.length ? inputs : undefined,
+      outputs: outputs.length ? outputs : undefined,
+    };
+  }
+
+  function buildSteps(resultId) {
+    const steps = [];
+    let seq = 0;
+    const walk = (node, parentStepId) => {
+      const stepId = `s${++seq}`;
+      steps.push(buildStepRequest(node, resultId, parentStepId, stepId));
+      for (const child of (node.children || [])) walk(child, stepId);
+    };
+    walk(rootNode, 'root');
+    return steps;
+  }
+
+  return { resultRequest, buildSteps };
+}
+
+// Import a single queued file. Returns { state, detail, fileId, resultId }.
+async function importOneFile(q, opts) {
+  const text = await q.file.text();
+  const checksum = await sha256Hex(text);
+  q.checksum = checksum;
+
+  if (!opts.createResults) {
+    const id = await uploadFileToService(q.file, opts.workspaceId);
+    await updateFileMetadata(id, { 'ATML Checksum': checksum }).catch(() => {});
+    return { state: 'uploaded', detail: `File uploaded (checksum ${checksum.slice(0, 12)}…). No result created.`, fileId: id };
+  }
+
+  const existingResults = await findResultsByChecksum(checksum);
+  const fileIdsFromResults = [...new Set(existingResults.flatMap((r) => r.fileIds || []))];
+  const orphanFiles = await findFilesByChecksum(checksum);
+  const existingFileIds = [...new Set([...fileIdsFromResults, ...orphanFiles])];
+  const hasExisting = existingResults.length > 0 || existingFileIds.length > 0;
+
+  if (hasExisting && !opts.replace) {
+    return { state: 'skipped', detail: `Skipped — a file/result with this checksum already exists (${existingResults.length} result(s), ${existingFileIds.length} file(s)). Enable "Replace existing files/results?" to overwrite.` };
+  }
+
+  let replaced = false;
+  if (hasExisting && opts.replace) {
+    if (existingResults.length) await tmDeleteResults(existingResults.map((r) => r.id));
+    if (existingFileIds.length) await deleteFiles(existingFileIds);
+    replaced = true;
+  }
+
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('File is not valid XML.');
+  if (!isAtml(doc)) throw new Error('File is not recognized as ATML.');
+
+  const fileId = await uploadFileToService(q.file, opts.workspaceId);
+  const { resultRequest, buildSteps } = buildResultAndSteps(doc, { checksum, workspaceId: opts.workspaceId, fileId });
+  const resultId = await tmCreateResult(resultRequest);
+  const steps = buildSteps(resultId);
+  if (steps.length) await tmCreateSteps(steps);
+  await updateFileMetadata(fileId, { 'ATML Checksum': checksum, testResultId: resultId }).catch(() => {});
+
+  return {
+    state: replaced ? 'replaced' : 'created',
+    detail: `${replaced ? 'Replaced existing file/result. ' : ''}Created result ${resultId} with ${steps.length} step(s).`,
+    fileId, resultId,
+  };
+}
+
 async function runUpload() {
   const wsId = $('#upload-workspace').value;
+  const createResults = $('#opt-create-results').checked;
+  const replace = $('#opt-replace-existing').checked;
   $('#upload-ok').disabled = true;
-  let lastSuccess = null;
+  let lastOpened = null;
+  const DONE_STATES = ['created', 'replaced', 'skipped', 'uploaded'];
   for (const q of uploadQueue) {
-    if (q.state === 'done') continue;
-    q.state = 'uploading';
+    if (DONE_STATES.includes(q.state)) continue;
+    q.state = 'working';
+    q.detail = '';
     renderUploadRows();
     try {
-      q.id = await uploadFileToService(q.file, wsId);
-      q.state = 'done';
-      lastSuccess = q;
+      const r = await importOneFile(q, { workspaceId: wsId, createResults, replace });
+      q.state = r.state;
+      q.detail = r.detail;
+      q.fileId = r.fileId;
+      q.resultId = r.resultId;
+      if (r.state === 'created' || r.state === 'replaced' || r.state === 'uploaded') lastOpened = q;
     } catch (e) {
       q.state = 'error';
-      q.error = e.message;
+      q.detail = e.message;
     }
     renderUploadRows();
   }
 
-  // If exactly one file was uploaded successfully, open it in the viewer.
-  const succeeded = uploadQueue.filter((q) => q.state === 'done');
-  if (succeeded.length === 1 && lastSuccess) {
-    const text = await lastSuccess.file.text();
-    const meta = { id: lastSuccess.id, workspace: wsId, created: new Date().toISOString(), size: lastSuccess.file.size, properties: { Name: lastSuccess.file.name } };
+  // If exactly one file was imported, open it in the viewer.
+  const opened = uploadQueue.filter((q) => ['created', 'replaced', 'uploaded'].includes(q.state));
+  if (opened.length === 1 && lastOpened) {
+    const text = await lastOpened.file.text();
+    const meta = { id: lastOpened.fileId, workspace: wsId, created: new Date().toISOString(), size: lastOpened.file.size, properties: { Name: lastOpened.file.name } };
     closeUploadDrawer();
-    state.selectedId = lastSuccess.id;
+    state.selectedId = lastOpened.fileId;
     showViewerPage();
-    openXml(text, lastSuccess.file.name, lastSuccess.id, meta);
+    openXml(text, lastOpened.file.name, lastOpened.fileId, meta);
     uploadQueue.length = 0;
     renderUploadRows();
     loadFiles();
-  } else if (succeeded.length > 0) {
-    // Multiple files: do not open the viewer — just refresh the search list so
-    // the imported files appear, and leave the drawer open showing results.
+  } else if (opened.length > 0) {
+    // Multiple files: refresh the search list and leave the drawer open with results.
     loadFiles();
+    renderUploadRows();
+  } else {
     renderUploadRows();
   }
 }

@@ -417,9 +417,11 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .upload-list td { padding: 8px 10px; border-top: 1px solid rgba(128, 128, 128, .16); }
 .upload-list .ul-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-list .ft-num { text-align: right; }
-.ul-state.done { color: var(--pass); }
+.ul-state { cursor: default; }
+.ul-state.created, .ul-state.replaced, .ul-state.uploaded { color: var(--pass); }
+.ul-state.skipped { color: var(--text-muted); }
 .ul-state.error { color: var(--fail); }
-.ul-state.uploading { color: var(--text-muted); }
+.ul-state.working { color: var(--text-muted); }
 .upload-footer { gap: 12px; }
 .drawer-header h2 { margin: 0; font: var(--ni-nimble-title-font); }
 .drawer-subtitle { margin-top: 4px; color: var(--text-muted); font-size: 13px; word-break: break-word; }
