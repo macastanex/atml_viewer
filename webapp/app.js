@@ -806,9 +806,20 @@ function stepType(node) {
   return st ? textOf(st) : null;
 }
 function stepTime(node) {
-  const t = firstByLocal(node, 'TotalTime');
+  // Prefer the step's own TotalTime (scope to its own Extension so a nested
+  // child step's time isn't picked up); otherwise derive it from start/end.
+  const ext = firstChildByLocal(node, 'Extension');
+  const t = ext ? firstByLocal(ext, 'TotalTime') : null;
   const v = t ? attr(t, 'value') : null;
-  return v != null ? Number(v) : null;
+  if (v != null && !isNaN(Number(v))) return Number(v);
+  const start = attr(node, 'startDateTime');
+  const end = attr(node, 'endDateTime');
+  if (start && end) {
+    const s = new Date(start).getTime();
+    const e = new Date(end).getTime();
+    if (!isNaN(s) && !isNaN(e) && e >= s) return (e - s) / 1000;
+  }
+  return null;
 }
 
 function extractMeasurements(node) {
