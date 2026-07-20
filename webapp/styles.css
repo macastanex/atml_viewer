@@ -346,16 +346,17 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .st-mval-cell.truncated { cursor: help; }
 .data-img {
   display: inline-block; vertical-align: top; margin: 3px 6px 3px 0;
-  max-width: 100%; max-height: 100px; border-radius: 2px; cursor: zoom-in;
+  max-width: 100%; max-height: 100px; width: auto; height: auto; object-fit: contain;
+  border-radius: 2px; cursor: zoom-in;
   border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 14%, transparent);
 }
-.drawer-table .data-img { max-width: 100%; max-height: 360px; }
+.drawer-table .data-img { max-width: 100%; max-height: 360px; width: auto; height: auto; }
 .img-lightbox {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, .8); cursor: zoom-out; padding: 24px;
 }
-.img-lightbox img { max-width: 96vw; max-height: 96vh; background: #fff; box-shadow: 0 4px 30px rgba(0, 0, 0, .5); }
+.img-lightbox img { max-width: 96vw; max-height: 96vh; width: auto; height: auto; object-fit: contain; background: #fff; box-shadow: 0 4px 30px rgba(0, 0, 0, .5); }
 .no-results { padding: 24px; text-align: center; color: var(--text-muted); }
 
 /* ===== Step details slide-out (SystemLink-style) ===== */
@@ -491,8 +492,8 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .array-table td { padding: 5px 14px; border-top: 1px solid rgba(128, 128, 128, .18); white-space: nowrap; }
 .array-table td.num { font-family: var(--mono); }
 .array-table td.array-idx { color: var(--text-muted); font-family: var(--mono); }
-.drawer-details { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
-.drawer-details .data-img { max-width: 100%; max-height: 360px; }
+.drawer-details { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 4px 0 12px; }
+.drawer-details .data-img { max-width: 100%; max-height: 360px; width: auto; height: auto; object-fit: contain; }
 .detail-text { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 .drawer-footer { padding: 12px 24px; display: flex; justify-content: flex-end; border-top: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 10%, transparent); }
 .drawer-raw {
