@@ -1850,15 +1850,10 @@ async function tmDeleteResults(ids) {
   if (!ids.length) return;
   await tmPost('delete-results', { ids }, false);
 }
-async function findFilesByChecksum(checksum) {
-  try {
-    const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
-      method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filter: `properties["ATML Checksum"]: "${checksum}"`, take: 100 }),
-    });
-    const data = await res.json();
-    return (data.availableFiles || data.files || []).map((f) => f.id);
-  } catch { return []; }
+// Files can't be reliably queried by a custom property on the file service, so
+// existing files are located via their linked result's fileIds instead.
+async function findFilesByChecksum() {
+  return [];
 }
 async function deleteFiles(ids) {
   if (!ids.length) return;
