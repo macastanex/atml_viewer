@@ -1299,12 +1299,15 @@ function renderValueInto(td, value) {
       td.appendChild(img);
     }
     td.classList.add('has-images');
-  } else if (s.length > 50) {
-    td.textContent = s.slice(0, 50) + '…';
+  } else if (s.length > 200) {
+    // Keep the DOM light for very long values; CSS clips to one row and the
+    // tooltip exposes the (still truncated) content.
+    td.textContent = s.slice(0, 200) + '…';
     td.title = s;
     td.classList.add('truncated');
   } else {
     td.textContent = s;
+    if (s.length > 24) td.title = s;
   }
 }
 
