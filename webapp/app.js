@@ -1864,10 +1864,26 @@ async function tmDeleteResults(ids) {
   if (!ids.length) return;
   await tmPost('delete-results', { ids }, false);
 }
-// Files can't be reliably queried by a custom property on the file service, so
-// existing files are located via their linked result's fileIds instead.
-async function findFilesByChecksum() {
-  return [];
+// Locate files tagged with a given ATML Checksum via the Elasticsearch-backed
+// search-files endpoint (more performant than paging query-files). Returns the
+// list of matching file ids.
+async function findFilesByChecksum(checksum) {
+  const safe = String(checksum).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  try {
+    const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filter: `properties.ATML Checksum:("${safe}")`,
+        orderBy: 'updated', orderByDescending: true, take: 100,
+      }),
+    });
+    const data = await res.json();
+    const files = data.availableFiles || data.files || data.value || [];
+    return files.map((f) => f.id).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 async function deleteFiles(ids) {
   if (!ids.length) return;
@@ -2006,10 +2022,12 @@ async function importOneFile(q, opts) {
   const fileIdsFromResults = [...new Set(existingResults.flatMap((r) => r.fileIds || []))];
   const orphanFiles = await findFilesByChecksum(checksum);
   const existingFileIds = [...new Set([...fileIdsFromResults, ...orphanFiles])];
-  const hasExisting = existingResults.length > 0 || existingFileIds.length > 0;
+  const hasResult = existingResults.length > 0;
+  const hasExisting = hasResult || existingFileIds.length > 0;
 
-  if (hasExisting && !opts.replace) {
-    return { state: 'skipped', detail: `Skipped — a file/result with this checksum already exists (${existingResults.length} result(s), ${existingFileIds.length} file(s)). Enable "Replace existing files/results?" to overwrite.` };
+  // Already fully imported (a result exists) and not replacing → skip.
+  if (hasResult && !opts.replace) {
+    return { state: 'skipped', detail: `Skipped — a result with this checksum already exists (${existingResults.length} result(s), ${existingFileIds.length} file(s)). Enable "Replace existing files/results?" to overwrite.` };
   }
 
   let replaced = false;
@@ -2023,18 +2041,33 @@ async function importOneFile(q, opts) {
   if (doc.querySelector('parsererror')) throw new Error('File is not valid XML.');
   if (!isAtml(doc)) throw new Error('File is not recognized as ATML.');
 
-  const fileId = await uploadFileToService(q.file, opts.workspaceId);
+  // Reuse a previously-uploaded file (has the checksum but no result) instead
+  // of uploading a duplicate; otherwise upload the file now.
+  const reusedFileId = (!replaced && !hasResult && existingFileIds.length) ? existingFileIds[0] : null;
+  const fileId = reusedFileId || await uploadFileToService(q.file, opts.workspaceId);
+  const linkFileIds = reusedFileId ? existingFileIds : [fileId];
+
   const { resultRequest, buildSteps } = buildResultAndSteps(doc, { checksum, workspaceId: opts.workspaceId, fileId });
+  resultRequest.fileIds = linkFileIds;
   const resultId = await tmCreateResult(resultRequest);
   const steps = buildSteps(resultId);
   if (steps.length) await tmCreateSteps(steps);
-  await updateFileMetadata(fileId, { 'ATML Checksum': checksum, testResultId: resultId }).catch(() => {});
+  for (const fid of linkFileIds) {
+    await updateFileMetadata(fid, { 'ATML Checksum': checksum, testResultId: resultId }).catch(() => {});
+  }
 
-  return {
-    state: replaced ? 'replaced' : 'created',
-    detail: `${replaced ? 'Replaced existing file/result. ' : ''}Created result ${resultId} with ${steps.length} step(s).`,
-    fileId, resultId,
-  };
+  let state, detail;
+  if (replaced) {
+    state = 'replaced';
+    detail = `Replaced existing file/result. Created result ${resultId} with ${steps.length} step(s).`;
+  } else if (reusedFileId) {
+    state = 'created';
+    detail = `File was already uploaded — created result ${resultId} with ${steps.length} step(s) and linked it to the existing file.`;
+  } else {
+    state = 'created';
+    detail = `Created result ${resultId} with ${steps.length} step(s).`;
+  }
+  return { state, detail, fileId, resultId };
 }
 
 async function runUpload() {
