@@ -1398,16 +1398,14 @@ function addStat(row, num, label, cls) {
 function prettySequenceName(name) {
   if (!name) return 'Test Results';
   const hashIdx = name.indexOf('#');
-  let s = name;
-  if (hashIdx >= 0) {
-    const before = name.slice(0, hashIdx);
-    const seq = before.split(/[\\/]/).pop();
-    const after = name.slice(hashIdx + 1);
-    s = seq ? `${seq} · ${after}` : after;
-  } else {
-    s = name.split(/[\\/]/).pop() || name;
-  }
-  return s;
+  const beforeHash = hashIdx >= 0 ? name.slice(0, hashIdx) : name;
+  const base = (beforeHash.split(/[\\/]/).pop() || '').trim();
+  if (base) return base;
+  // No sequence-file part before the '#': fall back to the callback name
+  // with the "MainSequence"/"Callback" wording stripped out.
+  const after = hashIdx >= 0 ? name.slice(hashIdx + 1) : name;
+  const cleaned = after.replace(/\bMainSequence\b/gi, '').replace(/\bCallback\b/gi, '').trim();
+  return cleaned || after.trim() || 'Test Results';
 }
 function durationBetween(start, end) {
   if (!start || !end) return '—';
@@ -1931,7 +1929,7 @@ function buildResultAndSteps(doc, opts) {
   const rootStatus = statusObjectFor(rootNode);
 
   const resultRequest = {
-    programName: attr(resultSet, 'name') || 'ATML Result',
+    programName: prettySequenceName(attr(resultSet, 'name')) || 'ATML Result',
     status: rootStatus,
     systemId: stationSerial || undefined,
     hostName: stationSerial || undefined,
