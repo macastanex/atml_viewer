@@ -311,11 +311,15 @@ function showSearchPage() {
   state.view = 'search';
   $('#search-page').hidden = false;
   $('#viewer-page').hidden = true;
+  const nav = $('#nav-search');
+  if (nav) nav.checked = true;
 }
 function showViewerPage() {
   state.view = 'viewer';
   $('#search-page').hidden = true;
   $('#viewer-page').hidden = false;
+  const nav = $('#nav-search');
+  if (nav) nav.checked = false;
   requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
 

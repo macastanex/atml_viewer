@@ -77,6 +77,7 @@
   border: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color, #202020) 16%, transparent);
   border-radius: 2px; padding: 0;
   background-color: #ffffff; color: var(--ni-nimble-body-font-color, #202020);
+  font-family: 'Source Sans Pro', 'Segoe UI', system-ui, -apple-system, sans-serif;
   box-shadow: 0 14px 40px rgba(0, 0, 0, .3); z-index: 9999;
 }
 nimble-theme-provider[theme="dark"] .trc-dialog,
@@ -247,7 +248,8 @@ nimble-theme-provider[theme="color"] .trc-dialog,
           </aside>
         </div>
       </form>`;
-    document.body.appendChild(dialog);
+    // Mount the dialog inside the nearest theme provider (once the button is
+    // placed) so it inherits Nimble tokens/fonts; fall back to <body>.
 
     const form = dialog.querySelector('.trc-form');
     const startText = dialog.querySelector('.trc-start');
@@ -373,6 +375,9 @@ nimble-theme-provider[theme="color"] .trc-dialog,
     let mount = options.mount;
     if (typeof mount === 'string') mount = document.querySelector(mount);
     if (mount) mount.appendChild(btn);
+
+    const dialogHost = btn.closest('nimble-theme-provider') || document.body;
+    dialogHost.appendChild(dialog);
 
     updateButton();
 
