@@ -1092,6 +1092,9 @@ function openArrayDialog(array, name) {
   head.appendChild(el('h3', { text: name || 'Array data' }));
   const shape = (array.dims && array.dims.length) ? array.dims.join(' × ') : String(array.points.length);
   head.appendChild(el('span', { class: 'array-dialog-shape', text: shape }));
+  const exportBtn = el('button', { class: 'array-dialog-export', attrs: { type: 'button', title: 'Export to CSV' }, text: 'Export CSV' });
+  exportBtn.addEventListener('click', () => downloadCsv(`${sanitizeFileName(name || 'array-data')}.csv`, arrayToCsv(array)));
+  head.appendChild(exportBtn);
   const closeBtn = el('button', { class: 'array-dialog-close', attrs: { type: 'button', 'aria-label': 'Close' }, text: '×' });
   head.appendChild(closeBtn);
   dlg.appendChild(head);
@@ -1143,6 +1146,44 @@ function buildArrayTable(array) {
   table.appendChild(thead);
   table.appendChild(tbody);
   return table;
+}
+
+// Build CSV text mirroring the array table layout (2D grid or flat list).
+function arrayToCsv(array) {
+  const dims = array.dims || [];
+  const points = array.points || [];
+  const rows = [];
+  if (dims.length >= 2) {
+    const nRows = dims[0];
+    const nCols = dims[1];
+    const grid = Array.from({ length: nRows }, () => new Array(nCols).fill(''));
+    for (const p of points) {
+      const rI = p.pos[0]; const cI = p.pos[1];
+      if (rI >= 0 && rI < nRows && cI >= 0 && cI < nCols) grid[rI][cI] = p.value;
+    }
+    rows.push(['#', ...Array.from({ length: nCols }, (_, c) => `Column ${c}`)]);
+    for (let r = 0; r < nRows; r++) rows.push([r, ...grid[r]]);
+  } else {
+    rows.push(['#', 'Value']);
+    points.forEach((p, i) => rows.push([p.pos.length ? p.pos[0] : i, p.value]));
+  }
+  return rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+}
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function sanitizeFileName(name) {
+  return String(name).replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'array-data';
+}
+function downloadCsv(filename, text) {
+  const blob = new Blob(['\ufeff' + text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { attrs: { href: url, download: filename } });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Render a value into a cell; if it contains base64 image data URIs, show the
