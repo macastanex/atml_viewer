@@ -766,7 +766,7 @@ function extractResults(node) {
     } else if (isMeasurementResult(r)) {
       measurements.push(item);
     } else {
-      outputs.push({ name: item.name, value: item.value, unit: item.unit });
+      outputs.push({ name: item.name, value: item.value, unit: item.unit, array: item.array });
     }
   }
   return { measurements, outputs, details };
@@ -793,10 +793,13 @@ function extractParameters(node) {
     const name = attr(p, 'name') || 'Parameter';
     const dataEl = firstChildByLocal(p, 'Data');
     const datum = dataEl ? firstChildByLocal(dataEl, 'Datum') : null;
+    const arrEl = dataEl ? firstChildByLocal(dataEl, 'IndexedArray') : null;
+    const array = arrEl ? parseIndexedArray(arrEl) : null;
     const value = datum ? datumValue(datum) : (attr(p, 'value') || '');
-    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '') : '';
+    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '')
+      : (arrEl ? (attr(arrEl, 'nonStandardUnit') || attr(arrEl, 'unit') || '') : '');
     const dir = (attr(p, 'direction') || '').toLowerCase();
-    const item = { name, value, unit };
+    const item = { name, value, unit, array };
     if (dir.startsWith('out')) outputs.push(item);
     else if (dir === 'inout' || dir === 'in-out') { inputs.push(item); outputs.push(item); }
     else inputs.push(item);
@@ -1552,7 +1555,11 @@ function renderParamsTable(items) {
     const tr = el('tr');
     tr.appendChild(el('td', { text: it.name || '' }));
     const valTd = el('td', { class: 'num' });
-    renderValueInto(valTd, it.value);
+    if (it.array && it.array.points && it.array.points.length) {
+      renderArrayPreview(valTd, it.array, it.name);
+    } else {
+      renderValueInto(valTd, it.value);
+    }
     tr.appendChild(valTd);
     if (hasUnit) tr.appendChild(el('td', { text: it.unit || '' }));
     tb.appendChild(tr);
@@ -1766,6 +1773,18 @@ function toIso(dt) {
   return new Date().toISOString();
 }
 function strOrEmpty(v) { return v == null ? '' : String(v); }
+// A readable scalar for a Test Monitor input/output value. Arrays are rendered
+// as a short preview plus their shape so they aren't blank in the result.
+function paramValueForApi(item) {
+  if (item && item.array && item.array.points && item.array.points.length) {
+    const arr = item.array;
+    const shape = (arr.dims && arr.dims.length) ? arr.dims.join(' \u00d7 ') : String(arr.points.length);
+    const preview = arr.points.slice(0, 10).map((p) => p.value).join(', ');
+    const more = arr.points.length > 10 ? ', \u2026' : '';
+    return `[${preview}${more}] (${shape})`;
+  }
+  return strOrEmpty(item ? item.value : '');
+}
 
 // Map an ATML outcome (+qualifier) to a Test Monitor status object.
 const ATML_STATUS = {
@@ -1836,8 +1855,8 @@ function buildResultAndSteps(doc, opts) {
       params.push(p);
     }
     if (!params.length) params.push({ name: node.name, status: status.statusName });
-    const inputs = (node.inputs || []).map((i) => ({ name: i.name, value: strOrEmpty(i.value) }));
-    const outputs = (node.outputs || []).map((o) => ({ name: o.name, value: strOrEmpty(o.value) }));
+    const inputs = (node.inputs || []).map((i) => ({ name: i.name, value: paramValueForApi(i) }));
+    const outputs = (node.outputs || []).map((o) => ({ name: o.name, value: paramValueForApi(o) }));
     const reportText = (node.details || []).map(String).join('\n');
     return {
       stepId, parentId, resultId,
