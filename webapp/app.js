@@ -627,10 +627,18 @@ function renderAtml(doc, container) {
     addField(ff, 'Created', formatDate(file.created) || '--');
     addField(ff, 'Updated', formatDate(file.updated) || '--');
     addField(ff, 'Workspace', state.workspaceNames[file.workspace] || file.workspace || '--');
-    addField(ff, 'File ID', file.id || '--');
+    if (file.id) {
+      addFieldLink(ff, 'File ID', file.id, `/files/file/${encodeURIComponent(file.id)}/preview`);
+    } else {
+      addField(ff, 'File ID', '--');
+    }
     const props = file.properties || {};
     for (const k of Object.keys(props)) {
       if (k === 'Name') continue;
+      if (k === 'testResultId' && props[k]) {
+        addFieldLink(ff, k, String(props[k]), `/testinsights/results/result/${encodeURIComponent(props[k])}/steps`);
+        continue;
+      }
       addField(ff, k, String(props[k]));
     }
     header.appendChild(ff);
@@ -1366,6 +1374,14 @@ function addFieldNode(container, label, valueNode) {
   val.appendChild(valueNode);
   item.appendChild(val);
   container.appendChild(item);
+}
+function addFieldLink(container, label, text, href) {
+  const link = el('a', {
+    class: 'rh-link',
+    text,
+    attrs: { href, target: '_blank', rel: 'noopener noreferrer' },
+  });
+  addFieldNode(container, label, link);
 }
 function addMeta(grid, label, value) {
   const item = el('div', { class: 'meta-item' });

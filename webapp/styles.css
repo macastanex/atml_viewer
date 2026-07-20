@@ -256,6 +256,8 @@ body {
 .rh-group-title + .rh-fields { margin-bottom: 16px; }
 .rh-label { font-size: 12px; color: var(--text-muted); }
 .rh-value { font-size: 13px; font-weight: 500; word-break: break-word; }
+.rh-link { color: var(--accent); text-decoration: none; }
+.rh-link:hover { text-decoration: underline; }
 .rh-status { display: inline-flex; align-items: center; gap: 6px; }
 .rh-status-text { font-weight: 600; }
 .rh-status.passed .rh-status-text { color: var(--pass); }
