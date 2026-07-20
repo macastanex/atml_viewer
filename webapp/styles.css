@@ -491,6 +491,9 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .array-table td { padding: 5px 14px; border-top: 1px solid rgba(128, 128, 128, .18); white-space: nowrap; }
 .array-table td.num { font-family: var(--mono); }
 .array-table td.array-idx { color: var(--text-muted); font-family: var(--mono); }
+.drawer-details { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
+.drawer-details .data-img { max-width: 100%; max-height: 360px; }
+.detail-text { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 .drawer-footer { padding: 12px 24px; display: flex; justify-content: flex-end; border-top: 1px solid color-mix(in srgb, var(--ni-nimble-body-font-color) 10%, transparent); }
 .drawer-raw {
   margin: 4px 0 12px; padding: 14px 16px; border-radius: var(--radius); overflow: auto;

@@ -804,6 +804,16 @@ function buildNode(child) {
   const ln = child.localName || '';
   const params = extractParameters(child);
   const results = extractResults(child);
+  // Report text may also arrive as a Data collection item named "ReportText".
+  const details = results.details.slice();
+  const data = [];
+  for (const d of extractData(child)) {
+    if ((d.key || '').trim().toLowerCase() === 'reporttext') {
+      if (d.value != null && String(d.value) !== '') details.push(d.value);
+    } else {
+      data.push(d);
+    }
+  }
   return {
     el: child,
     kind: ln,
@@ -818,7 +828,8 @@ function buildNode(child) {
     measurements: results.measurements,
     inputs: params.inputs,
     outputs: [...params.outputs, ...results.outputs],
-    data: extractData(child),
+    details,
+    data,
   };
 }
 
@@ -874,17 +885,25 @@ function isMeasurementResult(r) {
   return MEAS_TYPE_NAMES.has(name);
 }
 
-// Split a step's <tr:TestResult>s into measurements and (additional) outputs.
+// Split a step's <tr:TestResult>s into measurements, (additional) outputs, and
+// report-text "details". ReportText results are shown in their own Details
+// section (content only), not as Outputs.
 function extractResults(node) {
   const results = childrenByLocal(node, 'TestResult');
   const measurements = [];
   const outputs = [];
+  const details = [];
   for (const r of results) {
     const item = buildResultItem(r);
-    if (isMeasurementResult(r)) measurements.push(item);
-    else outputs.push({ name: item.name, value: item.value, unit: item.unit });
+    if ((item.name || '').trim().toLowerCase() === 'reporttext') {
+      if (item.value != null && String(item.value) !== '') details.push(item.value);
+    } else if (isMeasurementResult(r)) {
+      measurements.push(item);
+    } else {
+      outputs.push({ name: item.name, value: item.value, unit: item.unit });
+    }
   }
-  return { measurements, outputs };
+  return { measurements, outputs, details };
 }
 
 // Parse <c:IndexedArray> (TestStand waveform / multi-point arrays) into a
@@ -1552,6 +1571,9 @@ function openStepDetails(node) {
     ? renderParamsTable(inputs) : el('div', { class: 'drawer-empty', text: 'No inputs' })));
   info.appendChild(drawerSection('Outputs', outputs.length
     ? renderParamsTable(outputs) : el('div', { class: 'drawer-empty', text: 'No outputs' })));
+  if (node.details && node.details.length) {
+    info.appendChild(drawerSection('Details', renderDetailsBlock(node.details)));
+  }
   info.appendChild(drawerSection('Properties', renderPropertiesTable(node)));
 
   const data = $('#drawer-data');
@@ -1581,6 +1603,25 @@ function setDrawerTab(which) {
   $('#drawer-data').hidden = info;
   $('#dtab-info').classList.toggle('active', info);
   $('#dtab-data').classList.toggle('active', !info);
+}
+// Render report-text "details": base64 images become clickable thumbnails and
+// everything else is shown as full text (no name labels).
+function renderDetailsBlock(values) {
+  const wrap = el('div', { class: 'drawer-details' });
+  for (const v of values) {
+    const s = v == null ? '' : String(v);
+    const uris = s.match(DATA_URI_RE);
+    if (uris && uris.length) {
+      for (const u of uris) {
+        const img = el('img', { class: 'data-img', attrs: { src: u, alt: 'report image', loading: 'lazy', title: 'Click to enlarge' } });
+        img.addEventListener('click', (e) => { e.stopPropagation(); openImageLightbox(u); });
+        wrap.appendChild(img);
+      }
+    } else {
+      wrap.appendChild(el('pre', { class: 'detail-text', text: s }));
+    }
+  }
+  return wrap;
 }
 function drawerSection(title, contentEl) {
   const sec = el('div', { class: 'drawer-section' });
