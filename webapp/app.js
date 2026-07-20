@@ -2065,8 +2065,7 @@ async function runUpload() {
 
   // Keep the drawer open so users can review each file's status.
   // Refresh the search list in the background so imported files appear there.
-  const succeeded = uploadQueue.some((q) => ['created', 'replaced', 'uploaded'].includes(q.state));
-  if (succeeded) loadFiles();
+  loadFiles();
   renderUploadRows();
 }
 
