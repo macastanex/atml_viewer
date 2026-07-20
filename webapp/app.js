@@ -1880,8 +1880,8 @@ async function findFilesByChecksum(checksum) {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        filter: `properties.ATML Checksum:("${safe}")`,
-        orderBy: 'updated', orderByDescending: true, take: 100,
+        filter: `"properties.ATML Checksum":("${safe}")`,
+        orderBy: 'updated', orderByDescending: true, take: 1000,
       }),
     });
     const data = await res.json();
