@@ -605,7 +605,7 @@ function renderAtml(doc, container) {
   const end = attr(resultSet, 'endDateTime');
   const rsName = attr(resultSet, 'name') || 'Test Results';
 
-  const nodes = buildStepTree(resultSet);
+  const nodes = [buildResultSetRootNode(resultSet)];
   const stats = { passed: 0, failed: 0, done: 0, other: 0, total: 0 };
   countStats(nodes, stats);
   state.currentFilterMode = 'all';
@@ -772,29 +772,54 @@ function renderAtml(doc, container) {
   recompute();
 }
 
+// Derive a name for the ResultSet root step (TestStand shows the top sequence
+// call, e.g. "MainSequence Callback").
+function resultSetStepName(rs) {
+  const raw = attr(rs, 'name') || '';
+  const seq = raw.includes('#') ? raw.slice(raw.lastIndexOf('#') + 1) : (raw || 'MainSequence');
+  return /callback/i.test(seq) ? seq : `${seq} Callback`;
+}
+
+// The ResultSet itself is the root step of the tree (its steps are its children).
+function buildResultSetRootNode(resultSet) {
+  const root = buildNode(resultSet);
+  root.name = resultSetStepName(resultSet);
+  return root;
+}
+
 function buildStepTree(parent) {
   const out = [];
   for (const child of Array.from(parent.children)) {
     const ln = (child.localName || '');
     if (!STEP_LOCALS.map((s) => s.toLowerCase()).includes(ln.toLowerCase())) continue;
-    const node = {
-      el: child,
-      kind: ln,
-      name: attr(child, 'callerName') || attr(child, 'name') || ln,
-      id: attr(child, 'ID'),
-      start: attr(child, 'startDateTime'),
-      end: attr(child, 'endDateTime'),
-      outcome: outcomeOf(child),
-      stepType: stepType(child),
-      time: stepTime(child),
-      children: buildStepTree(child),
-      measurements: extractMeasurements(child),
-      params: extractParameters(child),
-      data: extractData(child),
-    };
-    out.push(node);
+    out.push(buildNode(child));
   }
   return out;
+}
+
+// Build a single step node. Measurements come from limit/generic TestResults;
+// inputs from Parameters; outputs from out-direction parameters plus custom
+// (additional) TestResults.
+function buildNode(child) {
+  const ln = child.localName || '';
+  const params = extractParameters(child);
+  const results = extractResults(child);
+  return {
+    el: child,
+    kind: ln,
+    name: attr(child, 'callerName') || attr(child, 'name') || ln,
+    id: attr(child, 'ID'),
+    start: attr(child, 'startDateTime'),
+    end: attr(child, 'endDateTime'),
+    outcome: outcomeOf(child),
+    stepType: stepType(child),
+    time: stepTime(child),
+    children: buildStepTree(child),
+    measurements: results.measurements,
+    inputs: params.inputs,
+    outputs: [...params.outputs, ...results.outputs],
+    data: extractData(child),
+  };
 }
 
 function outcomeOf(node) {
@@ -822,25 +847,44 @@ function stepTime(node) {
   return null;
 }
 
-function extractMeasurements(node) {
-  // Only direct TestResult children (not from nested steps).
+// Build a normalized result item {name,value,unit,type,limits,array} from a
+// <tr:TestResult>.
+function buildResultItem(r) {
+  const name = attr(r, 'name') || 'Measurement';
+  const dataEl = firstChildByLocal(r, 'TestData');
+  const datum = dataEl ? firstChildByLocal(dataEl, 'Datum') : null;
+  const arrEl = dataEl ? firstChildByLocal(dataEl, 'IndexedArray') : null;
+  const array = arrEl ? parseIndexedArray(arrEl) : null;
+  const value = datum ? datumValue(datum) : '';
+  const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '')
+    : (arrEl ? (attr(arrEl, 'nonStandardUnit') || attr(arrEl, 'unit') || '') : '');
+  const type = datum ? shortType(attr(datum, 'type') || datumXsiType(datum))
+    : (arrEl ? shortType(attr(arrEl, 'type')) : '');
+  const limits = extractLimits(r);
+  return { name, value, unit, type, limits, array };
+}
+
+// A TestResult is treated as a measurement when it has test limits or uses a
+// generic result-type name (Numeric/String/Boolean/…). Custom-named results
+// without limits are "additional results", shown as the step's Outputs.
+const MEAS_TYPE_NAMES = new Set(['numeric', 'string', 'boolean', 'number', 'measurement']);
+function isMeasurementResult(r) {
+  if (firstChildByLocal(r, 'TestLimits')) return true;
+  const name = (attr(r, 'name') || '').trim().toLowerCase();
+  return MEAS_TYPE_NAMES.has(name);
+}
+
+// Split a step's <tr:TestResult>s into measurements and (additional) outputs.
+function extractResults(node) {
   const results = childrenByLocal(node, 'TestResult');
-  const out = [];
+  const measurements = [];
+  const outputs = [];
   for (const r of results) {
-    const name = attr(r, 'name') || 'Measurement';
-    const dataEl = firstChildByLocal(r, 'TestData');
-    const datum = dataEl ? firstChildByLocal(dataEl, 'Datum') : null;
-    const arrEl = dataEl ? firstChildByLocal(dataEl, 'IndexedArray') : null;
-    const array = arrEl ? parseIndexedArray(arrEl) : null;
-    const value = datum ? datumValue(datum) : '';
-    const unit = datum ? (attr(datum, 'nonStandardUnit') || attr(datum, 'unit') || '')
-      : (arrEl ? (attr(arrEl, 'nonStandardUnit') || attr(arrEl, 'unit') || '') : '');
-    const type = datum ? shortType(attr(datum, 'type') || datumXsiType(datum))
-      : (arrEl ? shortType(attr(arrEl, 'type')) : '');
-    const limits = extractLimits(r);
-    out.push({ name, value, unit, type, limits, array });
+    const item = buildResultItem(r);
+    if (isMeasurementResult(r)) measurements.push(item);
+    else outputs.push({ name: item.name, value: item.value, unit: item.unit });
   }
-  return out;
+  return { measurements, outputs };
 }
 
 // Parse <c:IndexedArray> (TestStand waveform / multi-point arrays) into a
@@ -1502,11 +1546,12 @@ function openStepDetails(node) {
   const info = $('#drawer-info');
   info.innerHTML = '';
   info.appendChild(drawerSection('Measurements', renderMeasurementsTable(node)));
-  const params = node.params || { inputs: [], outputs: [] };
-  info.appendChild(drawerSection('Inputs', params.inputs.length
-    ? renderParamsTable(params.inputs) : el('div', { class: 'drawer-empty', text: 'No inputs' })));
-  info.appendChild(drawerSection('Outputs', params.outputs.length
-    ? renderParamsTable(params.outputs) : el('div', { class: 'drawer-empty', text: 'No outputs' })));
+  const inputs = node.inputs || [];
+  const outputs = node.outputs || [];
+  info.appendChild(drawerSection('Inputs', inputs.length
+    ? renderParamsTable(inputs) : el('div', { class: 'drawer-empty', text: 'No inputs' })));
+  info.appendChild(drawerSection('Outputs', outputs.length
+    ? renderParamsTable(outputs) : el('div', { class: 'drawer-empty', text: 'No outputs' })));
   info.appendChild(drawerSection('Properties', renderPropertiesTable(node)));
 
   const data = $('#drawer-data');
@@ -1550,8 +1595,10 @@ function drawerSection(title, contentEl) {
   return sec;
 }
 function renderMeasurementsTable(node) {
-  const meas = node.measurements || [];
-  if (!meas.length) return el('div', { class: 'drawer-empty', text: 'No measurements' });
+  // Every step shows at least its own pass/fail measurement (empty value).
+  const meas = (node.measurements && node.measurements.length)
+    ? node.measurements
+    : [{ name: node.name, value: '', unit: '', limits: null }];
   const table = el('table', { class: 'drawer-table' });
   const thead = el('thead');
   thead.innerHTML = '<tr><th>Name</th><th>Value</th><th>Unit</th><th>Low Limit</th><th>High Limit</th><th>Comparison Type</th><th class="dt-status"></th></tr>';
