@@ -2062,9 +2062,27 @@ async function runUpload() {
   }
 
   // Keep the drawer open so users can review each file's status.
-  // Refresh the search list in the background so imported files appear there.
-  loadFiles();
+  // Refresh the search list so imported files appear there. The file-service
+  // search index lags a moment behind upload, so poll until they show up.
+  const importedIds = uploadQueue
+    .filter((q) => ['created', 'replaced', 'uploaded'].includes(q.state) && q.fileId)
+    .map((q) => q.fileId);
+  await refreshAfterImport(importedIds);
   renderUploadRows();
+}
+
+// Refresh the file list after an import, retrying briefly to let the
+// file-service search index catch up with the freshly uploaded files.
+async function refreshAfterImport(importedIds) {
+  const wanted = new Set((importedIds || []).filter(Boolean));
+  for (let attempt = 0; attempt < 6; attempt++) {
+    state.loading = false; // ensure the refresh isn't skipped by the in-flight guard
+    await loadFiles();
+    if (!wanted.size) return;
+    const present = state.allFiles.some((f) => wanted.has(f.id));
+    if (present) return;
+    if (attempt < 5) await new Promise((r) => setTimeout(r, 1000));
+  }
 }
 
 function wireUploadDrawer() {
