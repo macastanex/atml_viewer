@@ -394,6 +394,7 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .upload-body { flex: 1; overflow: auto; padding: 12px 24px 24px; }
 .upload-label { display: block; font-size: 12px; color: var(--text-muted); margin: 8px 0 4px; }
 .upload-workspace { width: 100%; margin-bottom: 18px; }
+.upload-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
 .dropzone {
   border: 2px dashed rgba(128, 128, 128, .45); border-radius: var(--radius);
   padding: 32px 20px; text-align: center; transition: border-color .12s, background .12s;
