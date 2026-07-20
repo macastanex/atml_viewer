@@ -105,6 +105,7 @@ nimble-theme-provider[theme="color"] .trc-dialog,
 .trc-pick svg { width: 16px; height: 16px; }
 .trc-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .trc-actions { margin-top: 2px; width: min(100%, 245px); }
+.trc-actions nimble-button { width: 100%; }
 .trc-apply {
   width: 100%; height: 32px; border: none; border-radius: 0; cursor: pointer;
   background: var(--ni-nimble-button-fill-accent-color, #009fdf); color: #fff;
@@ -208,6 +209,12 @@ nimble-theme-provider[theme="color"] .trc-dialog,
     const quickButtons = order.map((key) =>
       `<button class="trc-quick-btn" data-range="${key}" type="button">${presets[key]}</button>`
     ).join('');
+    // The apply button can render as a Nimble outline button (opts.nimble) or a
+    // plain styled button. Either way it is type="button" and wired via click;
+    // the form's submit handler covers the Enter key inside the text fields.
+    const applyBtnHtml = options.nimble
+      ? '<nimble-button class="trc-apply-nimble" appearance="outline" type="button">Apply time range</nimble-button>'
+      : '<button class="trc-apply" type="button">Apply time range</button>';
     dialog.innerHTML = `
       <form class="trc-form" method="dialog">
         <div class="trc-layout">
@@ -230,7 +237,7 @@ nimble-theme-provider[theme="color"] .trc-dialog,
               </div>
             </label>
             <div class="trc-actions">
-              <button class="trc-apply" type="submit">Apply time range</button>
+              ${applyBtnHtml}
             </div>
             <div class="trc-err" hidden></div>
           </div>
@@ -346,6 +353,7 @@ nimble-theme-provider[theme="color"] .trc-dialog,
     const syncNativeFromText = (text, native) => { const p = parseFieldValue(text.value); if (!p) return; native.value = formatDateTimeLocal(p); text.value = formatFieldValue(p); };
 
     btn.addEventListener('click', open);
+    dialog.querySelector('.trc-apply, .trc-apply-nimble').addEventListener('click', applyCustom);
     form.addEventListener('submit', applyCustom);
     dialog.addEventListener('cancel', close);
     document.addEventListener('mousedown', onPointerDown);
