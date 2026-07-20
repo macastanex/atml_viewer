@@ -1764,6 +1764,9 @@ function initTheme() {
 const uploadQueue = [];   // [{ file, state: 'ready'|'uploading'|'done'|'error', id, error }]
 
 function openUploadDrawer() {
+  // Start each import session fresh — clear any previously listed files.
+  uploadQueue.length = 0;
+  renderUploadRows();
   $('#upload-drawer').classList.add('open');
   $('#upload-backdrop').classList.add('open');
 }
