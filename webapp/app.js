@@ -2044,7 +2044,6 @@ async function runUpload() {
   const createResults = $('#opt-create-results').checked;
   const replace = $('#opt-replace-existing').checked;
   $('#upload-ok').disabled = true;
-  let lastOpened = null;
   const DONE_STATES = ['created', 'replaced', 'skipped', 'uploaded'];
   for (const q of uploadQueue) {
     if (DONE_STATES.includes(q.state)) continue;
@@ -2057,7 +2056,6 @@ async function runUpload() {
       q.detail = r.detail;
       q.fileId = r.fileId;
       q.resultId = r.resultId;
-      if (r.state === 'created' || r.state === 'replaced' || r.state === 'uploaded') lastOpened = q;
     } catch (e) {
       q.state = 'error';
       q.detail = e.message;
@@ -2065,25 +2063,11 @@ async function runUpload() {
     renderUploadRows();
   }
 
-  // If exactly one file was imported, open it in the viewer.
-  const opened = uploadQueue.filter((q) => ['created', 'replaced', 'uploaded'].includes(q.state));
-  if (opened.length === 1 && lastOpened) {
-    const text = await lastOpened.file.text();
-    const meta = { id: lastOpened.fileId, workspace: wsId, created: new Date().toISOString(), size: lastOpened.file.size, properties: { Name: lastOpened.file.name } };
-    closeUploadDrawer();
-    state.selectedId = lastOpened.fileId;
-    showViewerPage();
-    openXml(text, lastOpened.file.name, lastOpened.fileId, meta);
-    uploadQueue.length = 0;
-    renderUploadRows();
-    loadFiles();
-  } else if (opened.length > 0) {
-    // Multiple files: refresh the search list and leave the drawer open with results.
-    loadFiles();
-    renderUploadRows();
-  } else {
-    renderUploadRows();
-  }
+  // Keep the drawer open so users can review each file's status.
+  // Refresh the search list in the background so imported files appear there.
+  const succeeded = uploadQueue.some((q) => ['created', 'replaced', 'uploaded'].includes(q.state));
+  if (succeeded) loadFiles();
+  renderUploadRows();
 }
 
 function wireUploadDrawer() {
