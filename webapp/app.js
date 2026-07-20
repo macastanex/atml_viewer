@@ -19,7 +19,7 @@ const state = {
   search: '',
   workspace: '',
   timeMode: 'preset',   // 'preset' | 'custom'
-  timeValue: 'all',     // preset key (see TIME_PRESETS)
+  timeValue: '90d',     // preset key (see TIME_PRESETS)
   timeCustom: null,     // { start: Date, end: Date }
   sort: { key: 'created', dir: 'desc' },
   workspaceNames: {},   // id -> name
@@ -206,7 +206,7 @@ const TIME_PRESETS = {
   '180d': 'Last 6 months',
   '365d': 'Last year',
 };
-const DEFAULT_TIME = 'all';
+const DEFAULT_TIME = '90d';
 
 function getRelativeDateStart(value, ref = new Date()) {
   if (!value || value === 'all') return null;
