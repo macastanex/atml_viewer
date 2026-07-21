@@ -2,6 +2,9 @@
 node_modules/
 nimble-build/
 
+# Build output — latest packed webapp package (kept locally, not committed)
+dist/
+
 # Local temp / scratch
 *.log
 sample.xml
