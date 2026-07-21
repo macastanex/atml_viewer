@@ -1,6 +1,6 @@
 # build.ps1 — Build (pack) and publish the ATML File Manager webapp.
 #
-# Packs the webapp folder into a workspace-local package at dist/webapp.nipkg
+# Packs the webapp folder into a workspace-local package at dist/ATMLFileManager.nipkg
 # (a copy of the latest build is always kept there) and then publishes that
 # exact package to the SystemLink WebApp service.
 #
@@ -10,7 +10,7 @@
 param(
     [string]$WebappId = '9206728f-81e4-49ec-9bf5-ae8215b8be28',
     [string]$Source   = 'webapp',
-    [string]$Output   = 'dist/webapp.nipkg',
+    [string]$Output   = 'dist/ATMLFileManager.nipkg',
     [switch]$NoPublish
 )
 
