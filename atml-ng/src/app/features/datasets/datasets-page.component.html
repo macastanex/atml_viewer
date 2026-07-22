@@ -51,7 +51,12 @@
   <sl-loading-state *ngIf="loading"></sl-loading-state>
 
   <div class="datasets__table" [hidden]="loading">
-    <nimble-table #fileTable id-field-name="id" selection-mode="single">
+    <nimble-table
+      #fileTable
+      id-field-name="id"
+      selection-mode="single"
+      (selection-change)="onFileSelectionChange($event)"
+    >
       <nimble-table-column-text field-name="name" column-id="name">
         Name
       </nimble-table-column-text>
@@ -74,4 +79,131 @@
     *ngIf="!loading && !errorMessage && filteredCount === 0"
     [message]="'No ATML/XML files match your filters.'"
   ></sl-empty-state>
+
+  <!-- ATML result viewer (detail) -->
+  <section class="viewer" *ngIf="selectedFileName">
+    <header class="viewer__head">
+      <h3>{{ selectedFileName }}</h3>
+    </header>
+
+    <sl-loading-state *ngIf="viewerLoading"></sl-loading-state>
+    <sl-error-banner *ngIf="viewerError" [message]="viewerError"></sl-error-banner>
+
+    <ng-container *ngIf="parsed as p">
+      <dl class="viewer__facts">
+        <div><dt>Test program</dt><dd>{{ p.summary.programName }}</dd></div>
+        <div>
+          <dt>Status</dt>
+          <dd><span class="status-pill" [attr.data-outcome]="outcomeClass(p.summary.outcome)">{{ p.summary.outcome || 'Unknown' }}</span></dd>
+        </div>
+        <div><dt>Serial number</dt><dd>{{ p.summary.serialNumber || '—' }}</dd></div>
+        <div><dt>Started</dt><dd>{{ formatDate(p.summary.start) }}</dd></div>
+        <div><dt>Elapsed</dt><dd>{{ elapsedRange() }}</dd></div>
+        <div><dt>System</dt><dd>{{ p.summary.systemId || '—' }}</dd></div>
+        <div><dt>Operator</dt><dd>{{ p.summary.operator || '—' }}</dd></div>
+      </dl>
+
+      <div class="viewer__stats">
+        <nimble-chip>{{ stats.total }} total</nimble-chip>
+        <nimble-chip class="stat-pass">{{ stats.passed }} passed</nimble-chip>
+        <nimble-chip class="stat-fail">{{ stats.failed }} failed</nimble-chip>
+      </div>
+
+      <div class="viewer__steps">
+        <nimble-table
+          #stepTable
+          id-field-name="id"
+          parent-id-field-name="parentId"
+          selection-mode="single"
+          (selection-change)="onStepSelectionChange($event)"
+        >
+          <nimble-table-column-text field-name="name" column-id="name">
+            Steps
+          </nimble-table-column-text>
+          <nimble-table-column-text field-name="status" column-id="status">
+            Status
+          </nimble-table-column-text>
+          <nimble-table-column-text field-name="elapsed" column-id="elapsed">
+            Elapsed
+          </nimble-table-column-text>
+          <nimble-table-column-text field-name="measurement" column-id="measurement">
+            Measurement
+          </nimble-table-column-text>
+          <nimble-table-column-text field-name="value" column-id="value">
+            Value
+          </nimble-table-column-text>
+          <nimble-table-column-text field-name="unit" column-id="unit">
+            Unit
+          </nimble-table-column-text>
+        </nimble-table>
+      </div>
+    </ng-container>
+  </section>
 </section>
+
+<!-- Step details drawer -->
+<nimble-drawer #stepDrawer location="right">
+  <div class="step-drawer" *ngIf="selectedStep as node">
+    <header class="step-drawer__head">
+      <h3>Step Details</h3>
+      <p>{{ node.name }}</p>
+    </header>
+
+    <div class="step-drawer__body">
+      <section *ngIf="node.measurements.length">
+        <h4>Measurements</h4>
+        <table class="kv">
+          <thead><tr><th>Name</th><th>Value</th><th>Unit</th><th>Low</th><th>High</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let m of node.measurements">
+              <td>{{ m.name }}</td>
+              <td>{{ preview(m) }}</td>
+              <td>{{ m.unit }}</td>
+              <td>{{ m.limits?.low ?? '' }}</td>
+              <td>{{ m.limits?.high ?? '' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section *ngIf="node.inputs.length">
+        <h4>Inputs</h4>
+        <table class="kv">
+          <tbody>
+            <tr *ngFor="let i of node.inputs"><td>{{ i.name }}</td><td>{{ preview(i) }}</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section *ngIf="node.outputs.length">
+        <h4>Outputs</h4>
+        <table class="kv">
+          <tbody>
+            <tr *ngFor="let o of node.outputs"><td>{{ o.name }}</td><td>{{ preview(o) }}</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section *ngIf="node.details.length">
+        <h4>Details</h4>
+        <pre class="detail-text" *ngFor="let d of node.details">{{ d }}</pre>
+      </section>
+
+      <section>
+        <h4>Properties</h4>
+        <table class="kv">
+          <tbody>
+            <tr><td>Started at</td><td>{{ formatDate(node.start) }}</td></tr>
+            <tr><td>Status type</td><td>{{ node.outcome || '—' }}</td></tr>
+            <tr><td>Step type</td><td>{{ node.stepType || '—' }}</td></tr>
+            <tr><td>ID</td><td>{{ node.id || '—' }}</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <footer class="step-drawer__foot">
+      <nimble-button appearance="ghost" (click)="closeDrawer()">Close</nimble-button>
+    </footer>
+  </div>
+</nimble-drawer>

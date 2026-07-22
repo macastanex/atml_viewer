@@ -80,6 +80,18 @@ export class FileService {
     );
     return data.availableFiles ?? data.files ?? [];
   }
+
+  /** Download the raw text content of a file. */
+  async downloadContent(id: string): Promise<string> {
+    const res = await fetch(
+      this.context.buildApiUrl(`${FILE_API}/files/${encodeURIComponent(id)}/data`),
+      this.context.buildRequestInit({ headers: { Accept: '*/*' } }),
+    );
+    if (!res.ok) {
+      throw new Error(this.describeError(res.status, res.statusText));
+    }
+    return res.text();
+  }
 }
 
 /** File display helpers (framework-agnostic). */

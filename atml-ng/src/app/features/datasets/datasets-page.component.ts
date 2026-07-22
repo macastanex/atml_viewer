@@ -1,7 +1,16 @@
-import { AfterViewInit, Component, OnInit, ViewChild } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnInit, ViewChild } from '@angular/core';
 
 import { NimbleTableDirective, TableFieldValue, TableRecord } from '@ni/nimble-angular/table';
 
+import {
+  AtmlNode,
+  ParsedAtml,
+  countStats,
+  formatSeconds,
+  isAtml,
+  outcomeClass,
+  parseAtml,
+} from '../../core/atml/atml';
 import {
   FileService,
   SystemLinkFile,
@@ -18,6 +27,18 @@ interface FileRow extends TableRecord {
   created: string;
   size: string;
   workspace: string;
+  [key: string]: TableFieldValue;
+}
+
+interface StepRow extends TableRecord {
+  id: string;
+  parentId?: string;
+  name: string;
+  status: string;
+  elapsed: string;
+  measurement: string;
+  value: string;
+  unit: string;
   [key: string]: TableFieldValue;
 }
 
@@ -54,14 +75,37 @@ export class DatasetsPageComponent implements AfterViewInit, OnInit {
   filteredCount = 0;
 
   private allFiles: SystemLinkFile[] = [];
+  private fileById: Record<string, SystemLinkFile> = {};
   private workspaceNames: Record<string, string> = {};
   workspaces: WorkspaceInfo[] = [];
   filteredRows: FileRow[] = [];
 
+  // ----- viewer (detail) state -----
+  viewerLoading = false;
+  viewerError = '';
+  selectedFileName = '';
+  parsed: ParsedAtml | null = null;
+  stats = { passed: 0, failed: 0, other: 0, total: 0 };
+  private stepRows: StepRow[] = [];
+  private nodeById = new Map<string, AtmlNode>();
+
+  // ----- step drawer state -----
+  drawerOpen = false;
+  selectedStep: AtmlNode | null = null;
+
   @ViewChild('fileTable', { read: NimbleTableDirective })
   private fileTable?: NimbleTableDirective<FileRow>;
 
-  constructor(private readonly fileService: FileService) {}
+  @ViewChild('stepTable', { read: NimbleTableDirective })
+  private stepTable?: NimbleTableDirective<StepRow>;
+
+  @ViewChild('stepDrawer')
+  private stepDrawer?: ElementRef<HTMLElement & { show(): Promise<unknown>; close(reason?: unknown): void }>;
+
+  constructor(
+    private readonly fileService: FileService,
+    private readonly cdr: ChangeDetectorRef,
+  ) {}
 
   ngOnInit(): void {
     void this.refresh();
@@ -80,6 +124,7 @@ export class DatasetsPageComponent implements AfterViewInit, OnInit {
         this.workspaceNames = Object.fromEntries(this.workspaces.map((w) => [w.id, w.name]));
       }
       this.allFiles = await this.fileService.searchAtmlFiles(this.searchTerm);
+      this.fileById = Object.fromEntries(this.allFiles.map((f) => [f.id, f]));
       this.applyFilters();
     } catch (err) {
       this.errorMessage = err instanceof Error ? err.message : String(err);
@@ -109,6 +154,141 @@ export class DatasetsPageComponent implements AfterViewInit, OnInit {
     this.scheduleRender();
   }
 
+  // ----- file selection → load + parse -----
+  async onFileSelectionChange(event: Event): Promise<void> {
+    const detail = (event as CustomEvent<{ selectedRecordIds: string[] }>).detail;
+    const id = detail?.selectedRecordIds?.[0];
+    if (!id) {
+      return;
+    }
+    const file = this.fileById[id];
+    this.selectedFileName = file ? fileName(file) : id;
+    this.viewerLoading = true;
+    this.viewerError = '';
+    this.parsed = null;
+    this.closeDrawer();
+    try {
+      const text = await this.fileService.downloadContent(id);
+      const doc = new DOMParser().parseFromString(text, 'application/xml');
+      if (doc.querySelector('parsererror')) {
+        throw new Error('File is not valid XML.');
+      }
+      if (!isAtml(doc)) {
+        throw new Error('File is not recognized as ATML.');
+      }
+      const parsed = parseAtml(doc);
+      if (!parsed) {
+        throw new Error('ATML file recognized but no ResultSet was found.');
+      }
+      this.parsed = parsed;
+      this.stats = countStats(parsed.root);
+      this.flattenSteps(parsed.root);
+      this.scheduleStepRender();
+    } catch (err) {
+      this.viewerError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.viewerLoading = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  private flattenSteps(root: AtmlNode): void {
+    const rows: StepRow[] = [];
+    this.nodeById.clear();
+    let seq = 0;
+    const walk = (node: AtmlNode, parentId?: string): void => {
+      const id = `s${seq++}`;
+      this.nodeById.set(id, node);
+      const meas = node.measurements[0];
+      const dataItem = !meas && node.data[0] ? node.data[0] : null;
+      rows.push({
+        id,
+        parentId,
+        name: node.name,
+        status: node.outcome || '',
+        elapsed: node.time != null ? formatSeconds(node.time) : '',
+        measurement: meas ? meas.name : dataItem ? dataItem.key : '',
+        value: meas ? this.valuePreview(meas.value, meas.array) : dataItem ? dataItem.value : '',
+        unit: meas ? meas.unit : '',
+      });
+      for (const child of node.children) {
+        walk(child, id);
+      }
+    };
+    walk(root);
+    this.stepRows = rows;
+  }
+
+  private valuePreview(value: string, array: AtmlNode['measurements'][number]['array']): string {
+    if (array && array.points.length) {
+      const shape = array.dims.length ? array.dims.join(' × ') : String(array.points.length);
+      const preview = array.points.slice(0, 5).map((p) => p.value).join(', ');
+      const more = array.points.length > 5 ? ', …' : '';
+      return `[${preview}${more}] (${shape})`;
+    }
+    return value ?? '';
+  }
+
+  onStepSelectionChange(event: Event): void {
+    const detail = (event as CustomEvent<{ selectedRecordIds: string[] }>).detail;
+    const id = detail?.selectedRecordIds?.[0];
+    const node = id ? this.nodeById.get(id) : undefined;
+    if (node) {
+      this.selectedStep = node;
+      this.drawerOpen = true;
+      this.cdr.detectChanges();
+      window.requestAnimationFrame(() => void this.stepDrawer?.nativeElement.show());
+    }
+  }
+
+  closeDrawer(): void {
+    const wasOpen = this.drawerOpen;
+    this.drawerOpen = false;
+    this.selectedStep = null;
+    if (wasOpen) {
+      try {
+        this.stepDrawer?.nativeElement.close();
+      } catch {
+        /* drawer may already be closing */
+      }
+    }
+  }
+
+  outcomeClass = outcomeClass;
+
+  /** Public value preview for measurement/parameter items (handles arrays). */
+  preview(item: { value: string; array: import('../../core/atml/atml').ArrayData | null }): string {
+    return this.valuePreview(item.value, item.array);
+  }
+
+  elapsedRange(): string {
+    if (!this.parsed) {
+      return '';
+    }
+    const { start, end } = this.parsed.summary;
+    if (!start || !end) {
+      return '—';
+    }
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    return isNaN(ms) || ms < 0 ? '—' : formatSeconds(ms / 1000);
+  }
+
+  formatDate(iso?: string | null): string {
+    if (!iso) {
+      return '—';
+    }
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+      ? '—'
+      : d.toLocaleString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+  }
+
   private toRow(f: SystemLinkFile): FileRow {
     return {
       id: f.id,
@@ -118,22 +298,6 @@ export class DatasetsPageComponent implements AfterViewInit, OnInit {
       size: this.formatSize(fileSizeBytes(f)),
       workspace: this.workspaceNames[f.workspace ?? ''] ?? '—',
     };
-  }
-
-  private formatDate(iso?: string): string {
-    if (!iso) {
-      return '';
-    }
-    const d = new Date(iso);
-    return isNaN(d.getTime())
-      ? ''
-      : d.toLocaleString(undefined, {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
   }
 
   private formatSize(bytes?: number): string {
@@ -150,15 +314,26 @@ export class DatasetsPageComponent implements AfterViewInit, OnInit {
   }
 
   private async renderRows(): Promise<void> {
-    if (!this.fileTable) {
-      return;
+    if (this.fileTable) {
+      await this.fileTable.setData(this.filteredRows);
     }
-    await this.fileTable.setData(this.filteredRows);
+  }
+
+  private async renderStepRows(): Promise<void> {
+    if (this.stepTable) {
+      await this.stepTable.setData(this.stepRows);
+    }
   }
 
   private scheduleRender(): void {
     window.requestAnimationFrame(() => {
       void this.renderRows();
+    });
+  }
+
+  private scheduleStepRender(): void {
+    window.requestAnimationFrame(() => {
+      void this.renderStepRows();
     });
   }
 }
