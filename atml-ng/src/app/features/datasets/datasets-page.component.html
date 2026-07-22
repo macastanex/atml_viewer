@@ -1,0 +1,77 @@
+<section class="datasets sl-page">
+  <header class="sl-page__intro datasets__intro">
+    <div>
+      <h2>Files</h2>
+      <p>Browse and search ATML/XML test files in SystemLink.</p>
+    </div>
+  </header>
+
+  <div class="datasets__toolbar sl-toolbar">
+    <div class="sl-toolbar__end">
+      <div class="sl-toolbar__filters">
+        <nimble-select
+          aria-label="Workspace"
+          [(ngModel)]="workspaceFilter"
+          (ngModelChange)="applyFilters()"
+        >
+          <nimble-list-option value="">All workspaces</nimble-list-option>
+          <nimble-list-option *ngFor="let ws of workspaces" [value]="ws.id">{{ ws.name }}</nimble-list-option>
+        </nimble-select>
+
+        <nimble-text-field
+          aria-label="Search file names"
+          [(ngModel)]="searchTerm"
+          (keydown.enter)="refresh()"
+          placeholder="Search file names"
+        ></nimble-text-field>
+
+        <nimble-select
+          aria-label="Created time range"
+          [(ngModel)]="timeFilter"
+          (ngModelChange)="applyFilters()"
+        >
+          <nimble-list-option *ngFor="let p of timePresets" [value]="p.value">{{ p.label }}</nimble-list-option>
+        </nimble-select>
+      </div>
+
+      <div class="datasets__toolbar-meta">
+        <strong>{{ filteredCount }}</strong>
+        <span>files</span>
+      </div>
+
+      <div class="sl-toolbar__actions">
+        <nimble-button appearance="ghost" (click)="refresh()" [disabled]="loading">
+          Refresh
+        </nimble-button>
+      </div>
+    </div>
+  </div>
+
+  <sl-error-banner *ngIf="errorMessage" [message]="errorMessage"></sl-error-banner>
+  <sl-loading-state *ngIf="loading"></sl-loading-state>
+
+  <div class="datasets__table" [hidden]="loading">
+    <nimble-table #fileTable id-field-name="id" selection-mode="single">
+      <nimble-table-column-text field-name="name" column-id="name">
+        Name
+      </nimble-table-column-text>
+      <nimble-table-column-text field-name="extension" column-id="extension">
+        Extension
+      </nimble-table-column-text>
+      <nimble-table-column-text field-name="created" column-id="created">
+        Created
+      </nimble-table-column-text>
+      <nimble-table-column-text field-name="size" column-id="size">
+        Size
+      </nimble-table-column-text>
+      <nimble-table-column-text field-name="workspace" column-id="workspace">
+        Workspace
+      </nimble-table-column-text>
+    </nimble-table>
+  </div>
+
+  <sl-empty-state
+    *ngIf="!loading && !errorMessage && filteredCount === 0"
+    [message]="'No ATML/XML files match your filters.'"
+  ></sl-empty-state>
+</section>

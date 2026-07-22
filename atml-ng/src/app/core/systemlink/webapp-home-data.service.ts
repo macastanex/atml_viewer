@@ -1,0 +1,58 @@
+import { Injectable } from '@angular/core';
+
+import { SystemLinkContextService } from './systemlink-context.service';
+
+export interface HomeMetric {
+  label: string;
+  value: string;
+  detail: string;
+  tone: 'info' | 'success' | 'warning';
+}
+
+export interface HomePageModel {
+  metrics: HomeMetric[];
+  patterns: string[];
+  nextSteps: string[];
+  readinessMessage: string;
+}
+
+@Injectable({ providedIn: 'root' })
+export class WebappHomeDataService {
+  constructor(private readonly context: SystemLinkContextService) {}
+
+  async load(): Promise<HomePageModel> {
+    return {
+      metrics: [
+        {
+          label: 'Hosted origin',
+          value: this.context.origin,
+          detail: 'Root future SDK clients and direct fetch calls here.',
+          tone: 'info',
+        },
+        {
+          label: 'Auth mode',
+          value: this.context.authMode,
+          detail: 'Swap with --auth when you need API-key-driven development flows.',
+          tone: 'warning',
+        },
+        {
+          label: 'Workspace',
+          value: this.context.workspaceName,
+          detail: 'Publishing help text and starter docs are already aligned to this workspace.',
+          tone: 'success',
+        },
+      ],
+      patterns: [
+        'Route-level navigation with Nimble anchor tabs',
+        'Drawer-based detail inspection from a primary dataset',
+        'Master/detail split pane with read-only detail fields until edit mode',
+      ],
+      nextSteps: [
+        'Replace one sample page with a real SystemLink query before adding more routes.',
+        'Use Nimble buttons for actions and Nimble anchors or route tabs for navigation.',
+        'Preserve hosted query parameters if you later add cross-app breadcrumbs.',
+      ],
+      readinessMessage: 'This list-detail starter keeps hosted routing, Nimble tokens, and record-inspection flows aligned to current Stratus guidance.',
+    };
+  }
+}
