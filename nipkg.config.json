@@ -1,0 +1,15 @@
+{
+  "package": "atml-file-manager",
+  "version": "1.0.0",
+  "displayName": "ATML File Manager",
+  "description": "Browse SystemLink files, render ATML (IEEE 1671/1636) test results in a readable summary and step tree, and import ATML files as native Test Monitor results.",
+  "section": "Applications",
+  "maintainer": "Mike Castaneda <mike.castaneda@emerson.com>",
+  "license": "MIT",
+  "xbPlugin": "webapp",
+  "homepage": "https://github.com/macastanex/atml_viewer",
+  "slPluginManagerTags": "atml,ieee1671,ieee1636,test-results,xml,file-manager",
+  "iconFile": "plugin-icon.svg",
+  "buildDir": "dist/app",
+  "buildCommand": "npm run build"
+}

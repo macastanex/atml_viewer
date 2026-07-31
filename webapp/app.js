@@ -13,12 +13,12 @@ const SERVER_PAGE = 1000;   // files fetched per server request (API max)
 const state = {
   files: [],            // filtered + sorted files shown in the table
   allFiles: [],         // raw files from the last fetch
+  serverTruncated: false, // true when the server had more results than were returned (capped)
   loading: false,
   view: 'search',       // 'search' | 'viewer'
   selectedId: null,
   search: '',
   workspace: '',
-  sort: { key: 'created', dir: 'desc' },
   workspaceNames: {},   // id -> name
   currentFile: null,    // metadata of the file currently open
   currentDoc: null,     // parsed XML Document
@@ -88,14 +88,20 @@ async function loadFiles() {
   setFileStatus(state.search ? 'Searching…' : 'Loading files…');
   try {
     let files;
+    let truncated = false;
     if (state.workspace) {
-      files = await queryWorkspaceXml(state.workspace);
+      const r = await queryWorkspaceXml(state.workspace);
+      files = r.files;
+      truncated = r.truncated;
       const q = state.search.toLowerCase();
       if (q) files = files.filter((f) => fileName(f).toLowerCase().includes(q));
     } else {
-      files = await elasticXmlSearch(state.search);
+      const r = await elasticXmlSearch(state.search);
+      files = r.files;
+      truncated = r.truncated;
     }
     state.allFiles = files;
+    state.serverTruncated = truncated;
     applyAndRender();
   } catch (e) {
     setFileStatus(e.message, true);
@@ -114,48 +120,34 @@ function applyAndRender() {
       return !isNaN(t) && t >= range.start.getTime() && t <= range.end.getTime();
     });
   }
-  files.sort(fileComparator(state.sort));
   state.files = files;
   renderFileTable();
-}
-
-function fileComparator(sort) {
-  const { key, dir } = sort;
-  const mul = dir === 'asc' ? 1 : -1;
-  const val = (f) => {
-    switch (key) {
-      case 'name': return fileName(f).toLowerCase();
-      case 'ext': return fileExt(f);
-      case 'size': return Number(f.size ?? f.size64 ?? 0);
-      case 'workspace': return (state.workspaceNames[f.workspace] || '').toLowerCase();
-      case 'created':
-      default: return new Date(f.created || f.updated).getTime() || 0;
-    }
-  };
-  return (a, b) => {
-    const va = val(a); const vb = val(b);
-    if (va < vb) return -1 * mul;
-    if (va > vb) return 1 * mul;
-    return 0;
-  };
 }
 
 // Global ATML/XML search/browse via Elasticsearch (all workspaces), newest
 // first. ATML reports may use either an .xml or .atml extension.
 async function elasticXmlSearch(text) {
+  const TAKE = 1000;
   const clauses = ['(extension: "xml" OR extension: "atml")'];
   if (text) {
     const safe = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     clauses.push(`name: "*${safe}*"`);
   }
-  const body = { filter: clauses.join(' AND '), orderBy: 'created', orderByDescending: true, take: 1000 };
+  const body = { filter: clauses.join(' AND '), orderBy: 'created', orderByDescending: true, take: TAKE };
   const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  return data.availableFiles || data.files || data.value || [];
+  const files = data.availableFiles || data.files || data.value || [];
+  // More files exist than we're showing when the server reports a continuation
+  // token, a higher total count, or simply fills the requested page.
+  const total = typeof data.totalCount === 'number' ? data.totalCount : null;
+  const truncated = !!data.continuationToken
+    || (total != null && total > files.length)
+    || files.length >= TAKE;
+  return { files, truncated };
 }
 
 // All XML/ATML files in a specific workspace (scoped via the workspace query param).
@@ -178,7 +170,9 @@ async function queryWorkspaceXml(workspaceId) {
     for (const f of items) { const ext = fileExt(f); if (ext === 'xml' || ext === 'atml') xml.push(f); }
     if (skip >= 5000) break; // safety cap for very large workspaces
   }
-  return xml;
+  // Truncated if we stopped at the safety cap while more files remained.
+  const truncated = skip >= 5000 && skip < total;
+  return { files: xml, truncated };
 }
 
 // Debounced re-query as the user types in the file search box.
@@ -209,37 +203,14 @@ function wireDateFilter() {
     defaultValue: DEFAULT_TIME,
     nimble: true,
     label: 'Filter by creation time',
-    onChange: () => applyAndRender(),
+    onChange: () => loadFiles(),
   });
 }
 
 
-
-function setSortColumn(key) {
-  if (state.sort.key === key) {
-    state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
-  } else {
-    state.sort.key = key;
-    // Text columns default to ascending; date/size default to descending.
-    state.sort.dir = (key === 'name' || key === 'ext' || key === 'workspace') ? 'asc' : 'desc';
-  }
-  updateSortIndicators();
-  applyAndRender();
-}
-
-function updateSortIndicators() {
-  document.querySelectorAll('#file-table th.sortable').forEach((th) => {
-    const active = th.dataset.sort === state.sort.key;
-    th.classList.toggle('sorted', active);
-    th.classList.toggle('desc', active && state.sort.dir === 'desc');
-    th.classList.toggle('asc', active && state.sort.dir === 'asc');
-    th.setAttribute('aria-sort', active ? (state.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
-  });
-}
 
 function renderFileTable() {
-  const tbody = $('#file-tbody');
-  tbody.innerHTML = '';
+  const table = $('#file-table');
   const files = state.files || [];
   const empty = $('#file-empty');
   if (files.length === 0) {
@@ -247,32 +218,33 @@ function renderFileTable() {
     if (empty) empty.hidden = false;
   } else {
     const n = files.length;
-    setFileStatus(`${n} file${n === 1 ? '' : 's'}`);
+    if (state.serverTruncated && n === state.allFiles.length) {
+      setFileStatus(`Showing ${n} most recent files`);
+    } else {
+      setFileStatus(`Showing ${n} file${n === 1 ? '' : 's'}`);
+    }
     if (empty) empty.hidden = true;
   }
 
-  for (const f of files) {
-    const tr = el('tr', { class: 'file-row' + (f.id === state.selectedId ? ' selected' : '') });
-    tr.tabIndex = 0;
-    const nameTd = el('td', { class: 'ft-name' });
-    const nameInner = el('div', { class: 'ft-name-inner' });
-    nameInner.appendChild(el('span', { class: 'file-ext xml', text: fileExt(f) || 'file' }));
-    nameInner.appendChild(el('span', { class: 'ft-name-text', text: fileName(f), attrs: { title: fileName(f) } }));
-    nameTd.appendChild(nameInner);
-    tr.appendChild(nameTd);
-    tr.appendChild(el('td', { text: fileExt(f) || '\u2014' }));
-    tr.appendChild(el('td', { text: formatDate(f.created || f.updated) }));
-    tr.appendChild(el('td', { class: 'ft-num', text: formatSize(f.size ?? f.size64) }));
-    tr.appendChild(el('td', { text: state.workspaceNames[f.workspace] || '\u2014' }));
-    tr.addEventListener('click', () => selectFile(f));
-    tr.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectFile(f); } });
-    tbody.appendChild(tr);
-  }
+  const records = files.map((f) => {
+    const created = Date.parse(f.created || f.updated);
+    return {
+      id: f.id,
+      name: fileName(f),
+      ext: fileExt(f) || '\u2014',
+      created: Number.isNaN(created) ? null : created,
+      size: Number(f.size ?? f.size64 ?? 0),
+      workspace: state.workspaceNames[f.workspace] || '\u2014',
+    };
+  });
+  table.setData(records);
+  if (state.selectedId) table.setSelectedRecordIds([state.selectedId]);
 }
 function setFileStatus(msg, isError) {
   const s = $('#file-status');
-  s.textContent = msg;
-  s.style.color = isError ? 'var(--fail)' : 'var(--text-muted)';
+  const t = $('#file-status-text');
+  if (t) t.textContent = msg; else s.textContent = msg;
+  s.style.color = isError ? 'var(--fail)' : '';
 }
 function formatSize(bytes) {
   if (bytes == null) return '—';
@@ -515,6 +487,20 @@ function renderAtml(doc, container) {
   addField(fields, 'Operator', operator || '--');
   header.appendChild(fields);
   container.appendChild(header);
+
+  // Centered handle on the panel's bottom edge: up arrow collapses the details,
+  // down arrow expands them (giving the step data more room).
+  const collapseBar = el('div', { class: 'rh-collapse-bar' });
+  const handle = el('button', { class: 'rh-handle', attrs: { type: 'button', 'aria-expanded': 'true', 'aria-label': 'Collapse details', title: 'Collapse details' } });
+  handle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
+  handle.addEventListener('click', () => {
+    const collapsed = header.classList.toggle('is-collapsed');
+    handle.setAttribute('aria-expanded', String(!collapsed));
+    handle.title = collapsed ? 'Show details' : 'Collapse details';
+    handle.setAttribute('aria-label', collapsed ? 'Show details' : 'Collapse details');
+  });
+  collapseBar.appendChild(handle);
+  container.appendChild(collapseBar);
 
   // ----- summary cards (also act as step filters) -----
   const cardsWrap = el('div', { class: 'summary-cards' });
@@ -2068,10 +2054,14 @@ function init() {
   $('#nav-search').addEventListener('click', showSearchPage);
   $('#back-to-files').addEventListener('click', showSearchPage);
 
-  document.querySelectorAll('#file-table th.sortable').forEach((th) => {
-    th.addEventListener('click', () => setSortColumn(th.dataset.sort));
+  const fileTable = $('#file-table');
+  fileTable.addEventListener('selection-change', async () => {
+    const ids = await fileTable.getSelectedRecordIds();
+    if (!ids.length) return;
+    const f = (state.files || []).find((x) => x.id === ids[0])
+      || (state.allFiles || []).find((x) => x.id === ids[0]);
+    if (f) selectFile(f);
   });
-  updateSortIndicators();
 
   $('#view-rendered').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('rendered'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
   $('#view-raw').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('raw'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });

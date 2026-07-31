@@ -5,6 +5,9 @@ nimble-build/
 # Build output — latest packed webapp package (kept locally, not committed)
 dist/
 
+# Generated Plugin Manager pack lockfile (regenerated on every pack; refers to dist/*.nipkg)
+manifest.json
+
 # Local temp / scratch
 *.log
 sample.xml

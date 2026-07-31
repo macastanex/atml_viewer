@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ATML File Manager">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00ad7c"/>
+      <stop offset="1" stop-color="#023325"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="url(#bg)"/>
+  <!-- Document / file glyph -->
+  <path d="M168 112 H296 L360 176 V392 H168 Z" fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M296 112 V176 H360" fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Text lines (muted neutral) -->
+  <path d="M208 224 H320" fill="none" stroke="#ececed" stroke-width="22" stroke-linecap="round"/>
+  <path d="M208 272 H320" fill="none" stroke="#ececed" stroke-width="22" stroke-linecap="round"/>
+  <!-- Pass check accent -->
+  <path d="M204 328 l28 30 l56 -66" fill="none" stroke="#32eb96" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -59,20 +59,21 @@
           <nimble-icon-arrow-rotate-right></nimble-icon-arrow-rotate-right>
         </button>
       </div>
-      <div id="file-status" class="file-status">Loading files…</div>
+      <div id="file-status" class="file-status">
+        <nimble-icon-filter></nimble-icon-filter>
+        <span id="file-status-text">Loading files…</span>
+      </div>
       <div class="file-table-wrap">
-        <table class="file-table" id="file-table">
-          <thead>
-            <tr>
-              <th class="sortable" data-sort="name" data-type="text">Name</th>
-              <th class="sortable" data-sort="ext" data-type="text">Extension</th>
-              <th class="sortable" data-sort="created" data-type="num">Created</th>
-              <th class="sortable ft-num" data-sort="size" data-type="num">Size</th>
-              <th class="sortable" data-sort="workspace" data-type="text">Workspace</th>
-            </tr>
-          </thead>
-          <tbody id="file-tbody"></tbody>
-        </table>
+        <nimble-table id="file-table" id-field-name="id" selection-mode="single">
+          <nimble-table-column-text field-name="name" column-id="name" fractional-width="2.5" min-pixel-width="240">Name</nimble-table-column-text>
+          <nimble-table-column-text field-name="ext" column-id="ext">Extension</nimble-table-column-text>
+          <nimble-table-column-date-text field-name="created" column-id="created" sort-index="0" sort-direction="descending">Created</nimble-table-column-date-text>
+          <nimble-table-column-number-text field-name="size" column-id="size" format="decimal" decimal-digits="1">
+            <nimble-unit-byte></nimble-unit-byte>
+            Size
+          </nimble-table-column-number-text>
+          <nimble-table-column-text field-name="workspace" column-id="workspace">Workspace</nimble-table-column-text>
+        </nimble-table>
         <div id="file-empty" class="no-results" hidden>No XML files match your search.</div>
       </div>
     </section>
