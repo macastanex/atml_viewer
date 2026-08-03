@@ -231,6 +231,7 @@ function renderFileTable() {
     return {
       id: f.id,
       name: fileName(f),
+      href: '#',
       ext: fileExt(f) || '\u2014',
       created: Number.isNaN(created) ? null : created,
       size: Number(f.size ?? f.size64 ?? 0),
@@ -262,6 +263,8 @@ function formatDate(iso) {
 
 /* ---------- Load & render a file ---------- */
 async function selectFile(f) {
+  if (state.openingId === f.id) return;
+  state.openingId = f.id;
   state.selectedId = f.id;
   showViewerPage();
   showLoading(true);
@@ -275,6 +278,7 @@ async function selectFile(f) {
     showViewerError(fileName(f), e.message);
   } finally {
     showLoading(false);
+    state.openingId = null;
   }
 }
 
@@ -2055,11 +2059,15 @@ function init() {
   $('#back-to-files').addEventListener('click', showSearchPage);
 
   const fileTable = $('#file-table');
-  fileTable.addEventListener('selection-change', async () => {
-    const ids = await fileTable.getSelectedRecordIds();
-    if (!ids.length) return;
-    const f = (state.files || []).find((x) => x.id === ids[0])
-      || (state.allFiles || []).find((x) => x.id === ids[0]);
+  // Clicking a row selects it (native Nimble highlight). Only the file-name
+  // hyperlink opens the ATML file details.
+  const nameColumn = fileTable.querySelector('[column-id="name"]');
+  if (nameColumn) nameColumn.addEventListener('delegated-event', (e) => {
+    const orig = e.detail && e.detail.originalEvent;
+    if (orig) orig.preventDefault();
+    const id = e.detail && e.detail.recordId;
+    const f = (state.files || []).find((x) => x.id === id)
+      || (state.allFiles || []).find((x) => x.id === id);
     if (f) selectFile(f);
   });
 
