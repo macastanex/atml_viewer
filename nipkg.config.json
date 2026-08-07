@@ -5,7 +5,7 @@
   "description": "Browse SystemLink files, render ATML (IEEE 1671/1636) test results in a readable summary and step tree, and import ATML files as native Test Monitor results.",
   "section": "Applications",
   "maintainer": "Mike Castaneda <mike.castaneda@emerson.com>",
-  "license": "MIT",
+  "license": "NI-SCL",
   "xbPlugin": "webapp",
   "homepage": "https://github.com/macastanex/atml_viewer",
   "slPluginManagerTags": "atml,ieee1671,ieee1636,test-results,xml,file-manager",

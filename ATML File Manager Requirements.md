@@ -20,7 +20,7 @@
 | Asset Type | Web App |
 | Approach | Build New |
 | Existing Asset or Example, if applicable | N/A
-| Epic / Work Item | https://dev.azure.com/ni/DevCentral/_workitems/edit/3977623 |
+| Epic | https://dev.azure.com/ni/DevCentral/_workitems/edit/3977623 |
 | Business Owner | Moyer |
 | Technical Owner | Michael Castaneda |
 | Reviewer(s) | Fred, Mark, Chris |
@@ -66,7 +66,7 @@ ATML File Manager is a SystemLink-embedded web app that lets test and quality en
 
 3. **What specific information or capability does the application provide to the user to complete the workflow?**
    The ingestion of ATML data. The ability to view raw ATML data in a rendered Step tree consistent with the SystemLink Test Insights UI.
-   
+
 ---
 
 ## 4. Scope
@@ -145,7 +145,7 @@ _Define what business success means if this asset is delivered. These should des
    _TBD — SystemLink apps/OOTB reviewer(s) and a Test Insights/Test Monitor stakeholder._
 
 7. **Is this intended as a permanent solution for a product-gap?**
-   _TBD
+   No
 
 8. **Will this app be sold?**
    No

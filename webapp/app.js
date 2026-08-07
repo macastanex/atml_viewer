@@ -39,8 +39,31 @@ const el = (tag, opts = {}) => {
 };
 
 /* ---------- API ---------- */
+// Fetch wrapper that retries on 429/503 with exponential backoff + jitter,
+// honoring a numeric Retry-After header when present.
+const RETRYABLE_STATUS = new Set([429, 503]);
+async function fetchWithRetry(url, opts = {}, { retries = 6, baseDelay = 500 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (netErr) {
+      if (attempt >= retries) throw netErr;
+      await sleep(baseDelay * 2 ** attempt + Math.random() * 250);
+      continue;
+    }
+    if (!RETRYABLE_STATUS.has(res.status) || attempt >= retries) return res;
+    const retryAfter = Number(res.headers.get('Retry-After'));
+    const wait = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : baseDelay * 2 ** attempt + Math.random() * 250;
+    await sleep(wait);
+  }
+}
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
 async function apiGet(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetchWithRetry(path, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' },
     ...opts,
@@ -1659,10 +1682,13 @@ function initTheme() {
 
 /* ---------- File upload slide-out ---------- */
 const uploadQueue = [];   // [{ file, state: 'ready'|'uploading'|'done'|'error', id, error }]
+const uploadKeys = new Set();   // name+size keys for O(1) de-duplication
 
 function openUploadDrawer() {
   // Start each import session fresh — clear any previously listed files.
   uploadQueue.length = 0;
+  uploadKeys.clear();
+  $('#upload-rows').innerHTML = '';
   renderUploadRows();
   $('#upload-drawer').classList.add('open');
   $('#upload-backdrop').classList.add('open');
@@ -1680,7 +1706,9 @@ function addUploadFiles(fileList) {
   let added = 0;
   for (const file of Array.from(fileList)) {
     if (!isXmlFile(file)) continue;
-    if (uploadQueue.some((q) => q.file.name === file.name && q.file.size === file.size)) continue;
+    const key = `${file.name}\u0000${file.size}`;
+    if (uploadKeys.has(key)) continue;
+    uploadKeys.add(key);
     uploadQueue.push({ file, state: 'ready', detail: '', fileId: null, resultId: null });
     added++;
   }
@@ -1693,20 +1721,41 @@ const UL_STATE_LABEL = {
   skipped: 'Skipped', uploaded: 'Uploaded', error: 'Error',
 };
 
+function buildUploadRow(q) {
+  const tr = el('tr');
+  tr.appendChild(el('td', { class: 'ul-name', text: q.file.name, attrs: { title: q.file.name } }));
+  tr.appendChild(el('td', { class: 'ft-num', text: formatSize(q.file.size) }));
+  const stateTd = el('td', { class: 'ul-state ' + q.state, text: UL_STATE_LABEL[q.state] || q.state });
+  if (q.detail) stateTd.title = q.detail;
+  tr.appendChild(stateTd);
+  q._stateTd = stateTd;
+  return tr;
+}
+
+// Patch a single row's status cell in place (avoids rebuilding the whole table).
+function updateUploadRow(q) {
+  const td = q._stateTd;
+  if (!td) return;
+  td.className = 'ul-state ' + q.state;
+  td.textContent = UL_STATE_LABEL[q.state] || q.state;
+  td.title = q.detail || '';
+}
+
+function updateUploadOkDisabled() {
+  $('#upload-ok').disabled = !uploadQueue.some((q) => q.state === 'ready');
+}
+
+// Append rows for newly-added queue items and patch existing ones. Only new
+// <tr> elements are created, so this scales when thousands of files are queued.
 function renderUploadRows() {
   const tbody = $('#upload-rows');
-  tbody.innerHTML = '';
+  const frag = document.createDocumentFragment();
   for (const q of uploadQueue) {
-    const tr = el('tr');
-    tr.appendChild(el('td', { class: 'ul-name', text: q.file.name, attrs: { title: q.file.name } }));
-    tr.appendChild(el('td', { class: 'ft-num', text: formatSize(q.file.size) }));
-    const stateTd = el('td', { class: 'ul-state ' + q.state, text: UL_STATE_LABEL[q.state] || q.state });
-    if (q.detail) stateTd.title = q.detail;
-    tr.appendChild(stateTd);
-    tbody.appendChild(tr);
+    if (!q._stateTd) frag.appendChild(buildUploadRow(q));
+    else updateUploadRow(q);
   }
-  const pending = uploadQueue.filter((q) => q.state === 'ready').length;
-  $('#upload-ok').disabled = pending === 0;
+  if (frag.childNodes.length) tbody.appendChild(frag);
+  updateUploadOkDisabled();
 }
 
 async function uploadFileToService(file, workspaceId) {
@@ -1714,7 +1763,7 @@ async function uploadFileToService(file, workspaceId) {
   form.append('file', file, file.name);
   let url = `${FILE_API}/service-groups/Default/upload-files`;
   if (workspaceId) url += `?workspace=${encodeURIComponent(workspaceId)}`;
-  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', body: form });
+  const res = await fetchWithRetry(url, { method: 'POST', credentials: 'same-origin', body: form });
   if (!res.ok) {
     const msg = res.status === 401 || res.status === 403
       ? 'Not authorized to upload to this workspace.'
@@ -1736,7 +1785,7 @@ async function sha256Hex(str) {
 }
 
 async function tmPost(path, body, expectJson = true) {
-  const res = await fetch(`${TM_API}/${path}`, {
+  const res = await fetchWithRetry(`${TM_API}/${path}`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
@@ -1751,8 +1800,13 @@ async function tmCreateResult(resultRequest) {
   if (!r || !r.id) throw new Error('Failed to create test result.');
   return r.id;
 }
+const STEP_BATCH_SIZE = 1000;
 async function tmCreateSteps(steps) {
-  return tmPost('steps', { steps, updateResultTotalTime: true });
+  for (let i = 0; i < steps.length; i += STEP_BATCH_SIZE) {
+    const batch = steps.slice(i, i + STEP_BATCH_SIZE);
+    const isLast = i + STEP_BATCH_SIZE >= steps.length;
+    await tmPost('steps', { steps: batch, updateResultTotalTime: isLast });
+  }
 }
 async function findResultsByChecksum(checksum) {
   const data = await tmPost('query-results', {
@@ -1763,6 +1817,13 @@ async function findResultsByChecksum(checksum) {
 async function tmDeleteResults(ids) {
   if (!ids.length) return;
   await tmPost('delete-results', { ids }, false);
+}
+// Merge properties into an existing result (replace=false keeps other props).
+async function tmUpdateResultProperties(resultId, properties) {
+  await tmPost('update-results', {
+    results: [{ id: resultId, properties }],
+    replace: false,
+  });
 }
 // Locate files tagged with a given ATML Checksum via the Elasticsearch-backed
 // search-files endpoint (more performant than paging query-files). Returns the
@@ -1861,7 +1922,7 @@ function buildResultAndSteps(doc, opts) {
     status: rootStatus,
     systemId: stationSerial || undefined,
     hostName: stationSerial || undefined,
-    properties: { 'ATML Checksum': opts.checksum },
+    properties: { 'ATML Checksum': opts.checksum, 'ATML Integrity': 'Incomplete' },
     keywords: ['ATML File Manager'],
     serialNumber: serial || undefined,
     operator: operator || undefined,
@@ -1964,6 +2025,9 @@ async function importOneFile(q, opts) {
   const resultId = await tmCreateResult(resultRequest);
   const steps = buildSteps(resultId);
   if (steps.length) await tmCreateSteps(steps);
+  // Mark integrity Complete only after every step batch has been uploaded, so
+  // an interrupted transfer leaves the result flagged "Incomplete".
+  await tmUpdateResultProperties(resultId, { 'ATML Integrity': 'Complete' });
   for (const fid of linkFileIds) {
     await updateFileMetadata(fid, { 'ATML Checksum': checksum, testResultId: resultId }).catch(() => {});
   }
@@ -1988,23 +2052,36 @@ async function runUpload() {
   const replace = $('#opt-replace-existing').checked;
   $('#upload-ok').disabled = true;
   const DONE_STATES = ['created', 'replaced', 'skipped', 'uploaded'];
-  for (const q of uploadQueue) {
-    if (DONE_STATES.includes(q.state)) continue;
-    q.state = 'working';
-    q.detail = '';
-    renderUploadRows();
-    try {
-      const r = await importOneFile(q, { workspaceId: wsId, createResults, replace });
-      q.state = r.state;
-      q.detail = r.detail;
-      q.fileId = r.fileId;
-      q.resultId = r.resultId;
-    } catch (e) {
-      q.state = 'error';
-      q.detail = e.message;
+  const opts = { workspaceId: wsId, createResults, replace };
+
+  // Import with a bounded worker pool so at most POOL_SIZE files are in flight.
+  const pending = uploadQueue.filter((q) => !DONE_STATES.includes(q.state));
+  const POOL_SIZE = 5;
+  let next = 0;
+  async function worker() {
+    for (;;) {
+      const q = pending[next++];
+      if (!q) return;
+      q.state = 'working';
+      q.detail = '';
+      updateUploadRow(q);
+      try {
+        const r = await importOneFile(q, opts);
+        q.state = r.state;
+        q.detail = r.detail;
+        q.fileId = r.fileId;
+        q.resultId = r.resultId;
+      } catch (e) {
+        q.state = 'error';
+        q.detail = e.message;
+      }
+      updateUploadRow(q);
     }
-    renderUploadRows();
   }
+  await Promise.all(
+    Array.from({ length: Math.min(POOL_SIZE, pending.length) }, worker),
+  );
+  updateUploadOkDisabled();
 
   // Keep the drawer open so users can review each file's status.
   // Refresh the search list so imported files appear there. The file-service
