@@ -9,6 +9,15 @@
 
 const FILE_API = '/nifile/v1';
 const SERVER_PAGE = 1000;   // files fetched per server request (API max)
+const AUTO_REFRESH_MS = 30000;   // file-table auto-refresh interval (ms); 0 disables
+
+// SystemLink authorization action IDs used to gate write operations in the UI.
+const PERM = {
+  uploadFile: 'file:Upload',
+  deleteFile: 'file:Delete',
+  createResult: 'testmonitor:Create',
+  deleteResult: 'testmonitor:Delete',
+};
 
 const state = {
   files: [],            // filtered + sorted files shown in the table
@@ -25,6 +34,7 @@ const state = {
   currentRawText: '',
   currentFormat: 'xml', // 'atml' | 'xml'
   currentFilterMode: 'all',
+  authStatements: null, // flattened policy statements from /niauth/v1/auth (null until loaded)
 };
 
 /* ---------- DOM helpers ---------- */
@@ -87,6 +97,34 @@ async function fetchWorkspaces() {
   } catch {
     return [];
   }
+}
+
+// Load the caller's granted privileges (flattened policy statements) so the UI
+// can gate write actions per workspace. Fails open (leaves authStatements null)
+// so a lookup failure never blocks a user the server would actually allow.
+async function loadPrivileges() {
+  try {
+    const res = await fetch('/niauth/v1/auth', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    if (!res.ok) { console.warn('[auth] /niauth/v1/auth failed', res.status, res.statusText); return; }
+    const data = await res.json();
+    state.authStatements = (data.policies || []).flatMap((p) => p.statements || []);
+    updateUploadOkDisabled();
+  } catch (e) {
+    console.warn('[auth] privilege lookup error', e);
+  }
+}
+
+// True if the caller holds `action` (e.g. "file:Upload") in `workspaceId`.
+// Matches exact actions, namespace wildcards ("file:*"), and the global "*".
+// Statements scoped to "*" apply to every workspace. When privileges haven't
+// loaded yet, returns true (fail open) — the server still enforces the real rule.
+function can(action, workspaceId) {
+  if (!state.authStatements) return true;
+  const ns = action.split(':')[0];
+  return state.authStatements.some((s) => {
+    if (s.workspace !== '*' && s.workspace !== workspaceId) return false;
+    return (s.actions || []).some((a) => a === '*' || a === `${ns}:*` || a === action);
+  });
 }
 
 function fileName(f) {
@@ -312,6 +350,7 @@ function showSearchPage() {
   $('#viewer-page').hidden = true;
   const nav = $('#nav-search');
   if (nav) nav.checked = true;
+  updateHeaderButtons();
 }
 function showViewerPage() {
   state.view = 'viewer';
@@ -319,7 +358,17 @@ function showViewerPage() {
   $('#viewer-page').hidden = false;
   const nav = $('#nav-search');
   if (nav) nav.checked = false;
+  updateHeaderButtons();
   requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+}
+
+// Header actions differ per page: the Search-files toggle is redundant on the
+// file table (hidden there, shown on the viewer as a back action). A View-file
+// button takes its place on the table when a row is selected.
+function updateHeaderButtons() {
+  const onSearch = state.view === 'search';
+  $('#nav-search').hidden = onSearch;
+  $('#nav-view-file').hidden = !(onSearch && state.selectedId);
 }
 
 function openXml(text, name, id, file) {
@@ -954,7 +1003,7 @@ function renderStepsRow(row, onToggle) {
 
   // Status column
   const c2 = el('td', { class: 'st-cell st-status-cell' });
-  if (row.kind === 'step') c2.appendChild(statusIcon(row.outcome));
+  if (row.kind === 'step') c2.appendChild(statusIcon(row.outcome, row.node && row.node.outcomeQualifier));
   tr.appendChild(c2);
 
   // Elapsed time
@@ -1236,13 +1285,29 @@ function closeImageLightbox() {
   if (box) box.hidden = true;
 }
 
-function statusIcon(outcome) {
-  const v = (outcome || '').toLowerCase();
-  const span = el('span', { class: 'st-status ' + outcomeClass(outcome) });
+// Resolve an ATML outcome to its effective status. TestStand emits skipped/etc.
+// as value "UserDefined"/"Aborted" with the real state in the qualifier, so fall
+// back to the qualifier (matches how results are imported and shown in Test Insights).
+function resolveOutcome(value, qualifier) {
+  let s = (value || '').trim().toLowerCase();
+  if (s === 'aborted' || s === 'userdefined') s = (qualifier || '').trim().toLowerCase();
+  return s;
+}
+
+const STATUS_LABEL = {
+  passed: 'Passed', failed: 'Failed', done: 'Done', skipped: 'Skipped',
+  notstarted: 'Not started', error: 'Error', errored: 'Errored', terminated: 'Terminated',
+};
+
+function statusIcon(outcome, qualifier) {
+  const v = resolveOutcome(outcome, qualifier);
+  const span = el('span', { class: 'st-status ' + outcomeClass(v) });
+  span.title = STATUS_LABEL[v] || outcome || 'Unknown';
   let tag = null, severity = null;
   if (v === 'passed') { tag = 'nimble-icon-check'; severity = 'success'; }
   else if (v === 'failed') { tag = 'nimble-icon-times'; severity = 'error'; }
-  else if (v === 'done') { tag = 'nimble-icon-check'; }
+  else if (v === 'done') { tag = 'nimble-icon-check-dot'; }
+  else if (v === 'skipped' || v === 'notstarted') { tag = 'nimble-icon-skip-arrow'; }
   else if (v === 'error' || v === 'errored' || v === 'terminated') { tag = 'nimble-icon-exclamation-mark'; severity = 'warning'; }
   if (tag) {
     const attrs = severity ? { severity } : {};
@@ -1589,7 +1654,7 @@ function renderMeasurementsTable(node) {
     tr.appendChild(el('td', { class: 'num', text: lim.high != null ? String(lim.high) : '' }));
     tr.appendChild(el('td', { text: lim.comparator || '' }));
     const st = el('td', { class: 'dt-status' });
-    st.appendChild(statusIcon(node.outcome));
+    st.appendChild(statusIcon(node.outcome, node.outcomeQualifier));
     tr.appendChild(st);
     tb.appendChild(tr);
   }
@@ -1689,6 +1754,7 @@ function openUploadDrawer() {
   uploadQueue.length = 0;
   uploadKeys.clear();
   $('#upload-rows').innerHTML = '';
+  hideUploadProgress();
   renderUploadRows();
   $('#upload-drawer').classList.add('open');
   $('#upload-backdrop').classList.add('open');
@@ -1707,9 +1773,16 @@ function addUploadFiles(fileList) {
   for (const file of Array.from(fileList)) {
     if (!isXmlFile(file)) continue;
     const key = `${file.name}\u0000${file.size}`;
-    if (uploadKeys.has(key)) continue;
+    const existing = uploadQueue.find((q) => q.key === key);
+    if (existing) {
+      // Re-selecting an already-listed file resets it to Ready so it can be
+      // re-run (e.g. to replace the copy created by a previous import).
+      Object.assign(existing, { file, state: 'ready', detail: '', fileId: null, resultId: null });
+      added++;
+      continue;
+    }
     uploadKeys.add(key);
-    uploadQueue.push({ file, state: 'ready', detail: '', fileId: null, resultId: null });
+    uploadQueue.push({ key, file, state: 'ready', detail: '', fileId: null, resultId: null });
     added++;
   }
   renderUploadRows();
@@ -1741,8 +1814,68 @@ function updateUploadRow(q) {
   td.title = q.detail || '';
 }
 
+// Returns a message if the current import options exceed the caller's
+// permissions in the target workspace, or null when the import is allowed.
+function importPermissionIssue() {
+  const ws = $('#upload-workspace').value;
+  const createResults = $('#opt-create-results').checked;
+  const replace = $('#opt-replace-existing').checked;
+  if (!can(PERM.uploadFile, ws)) return 'You do not have permission to upload files to this workspace. Select a workspace you can write to.';
+  if (createResults && !can(PERM.createResult, ws)) return 'You do not have permission to create test results in this workspace.';
+  if (replace) {
+    if (!can(PERM.deleteFile, ws)) return 'You do not have permission to replace (delete) files in this workspace.';
+    if (createResults && !can(PERM.deleteResult, ws)) return 'You do not have permission to replace (delete) results in this workspace.';
+  }
+  return null;
+}
+
+// True if the caller can upload files to at least one accessible workspace.
+// Fails open until privileges/workspaces have loaded.
+function canImportToAnyWorkspace() {
+  const ids = Object.keys(state.workspaceNames || {});
+  if (!state.authStatements || !ids.length) return true;
+  return ids.some((id) => can(PERM.uploadFile, id));
+}
+
 function updateUploadOkDisabled() {
-  $('#upload-ok').disabled = !uploadQueue.some((q) => q.state === 'ready');
+  const anyWrite = canImportToAnyWorkspace();
+  const issue = anyWrite
+    ? importPermissionIssue()
+    : 'You do not have permission to import files to any workspace.';
+  const msg = $('#upload-perm-msg');
+  if (msg) { msg.textContent = issue || ''; msg.hidden = !issue; }
+  const hasReady = uploadQueue.some((q) => q.state === 'ready');
+  // Only hard-disable when the user can't write anywhere; a selected-workspace
+  // issue is shown as a warning so they can switch to a writable workspace.
+  $('#upload-ok').disabled = !hasReady || !anyWrite;
+}
+
+// Import-run progress bar (footer). done/total files processed this run.
+function hideUploadProgress() { $('#upload-progress').hidden = true; }
+function setUploadProgress(done, total) {
+  const wrap = $('#upload-progress');
+  wrap.hidden = total <= 0;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $('#upload-progress-fill').style.width = `${pct}%`;
+  $('#upload-progress-text').textContent = `${done} / ${total}`;
+}
+
+// Lock the import options while a run is in progress so they can't change mid-run.
+function setImportControlsDisabled(disabled) {
+  $('#upload-workspace').disabled = disabled;
+  $('#opt-create-results').disabled = disabled;
+  $('#opt-replace-existing').disabled = disabled;
+  $('#dz-browse').disabled = disabled;
+  $('#dropzone').classList.toggle('disabled', disabled);
+}
+
+// Changing an import option invalidates prior results, so reset every listed
+// file back to Ready (re-enabling the Import button) so the run can be redone.
+function resetQueueToReady() {
+  for (const q of uploadQueue) {
+    Object.assign(q, { state: 'ready', detail: '', fileId: null, resultId: null });
+  }
+  renderUploadRows();
 }
 
 // Append rows for newly-added queue items and patch existing ones. Only new
@@ -1800,7 +1933,7 @@ async function tmCreateResult(resultRequest) {
   if (!r || !r.id) throw new Error('Failed to create test result.');
   return r.id;
 }
-const STEP_BATCH_SIZE = 1000;
+const STEP_BATCH_SIZE = 10000;
 async function tmCreateSteps(steps) {
   for (let i = 0; i < steps.length; i += STEP_BATCH_SIZE) {
     const batch = steps.slice(i, i + STEP_BATCH_SIZE);
@@ -1827,24 +1960,28 @@ async function tmUpdateResultProperties(resultId, properties) {
 }
 // Locate files tagged with a given ATML Checksum via the Elasticsearch-backed
 // search-files endpoint (more performant than paging query-files). Returns the
-// list of matching file ids.
+// list of matching file ids. The property key has a space, so the field name is
+// escaped Lucene-style; the original quoted form is kept as a fallback.
 async function findFilesByChecksum(checksum) {
   const safe = String(checksum).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  try {
-    const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filter: `"properties.ATML Checksum":("${safe}")`,
-        orderBy: 'updated', orderByDescending: true, take: 1000,
-      }),
-    });
-    const data = await res.json();
-    const files = data.availableFiles || data.files || data.value || [];
-    return files.map((f) => f.id).filter(Boolean);
-  } catch {
-    return [];
+  const filters = [
+    `properties.ATML\\ Checksum:"${safe}"`,
+    `"properties.ATML Checksum":("${safe}")`,
+  ];
+  for (const filter of filters) {
+    try {
+      const res = await apiGet(`${FILE_API}/service-groups/Default/search-files`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filter, orderBy: 'updated', orderByDescending: true, take: 1000 }),
+      });
+      const data = await res.json();
+      const files = data.availableFiles || data.files || data.value || [];
+      const ids = files.map((f) => f.id).filter(Boolean);
+      if (ids.length) return ids;
+    } catch { /* try the next filter form */ }
   }
+  return [];
 }
 async function deleteFiles(ids) {
   if (!ids.length) return;
@@ -1986,9 +2123,29 @@ async function importOneFile(q, opts) {
   q.checksum = checksum;
 
   if (!opts.createResults) {
+    // Dedup by checksum even when not creating results: a file already in the
+    // service (orphan upload or one linked to a prior result) must not be
+    // uploaded again unless the user opted to replace.
+    const priorResults = await findResultsByChecksum(checksum);
+    const fileIdsFromResults = [...new Set(priorResults.flatMap((r) => r.fileIds || []))];
+    const orphanFiles = await findFilesByChecksum(checksum);
+    const existingFileIds = [...new Set([...fileIdsFromResults, ...orphanFiles])];
+
+    if (existingFileIds.length && !opts.replace) {
+      return { state: 'skipped', detail: `Skipped — a file with this checksum already exists (${existingFileIds.length} file(s)). Enable "Replace existing files/results?" to overwrite.` };
+    }
+    if (existingFileIds.length && opts.replace) {
+      if (priorResults.length) await tmDeleteResults(priorResults.map((r) => r.id));
+      await deleteFiles(existingFileIds);
+    }
     const id = await uploadFileToService(q.file, opts.workspaceId);
-    await updateFileMetadata(id, { 'ATML Checksum': checksum }).catch(() => {});
-    return { state: 'uploaded', detail: `File uploaded (checksum ${checksum.slice(0, 12)}…). No result created.`, fileId: id };
+    await updateFileMetadata(id, { 'ATML Checksum': checksum }).catch((e) => console.warn('[import] set ATML Checksum failed for file', id, e));
+    const replaced = existingFileIds.length && opts.replace;
+    return {
+      state: replaced ? 'replaced' : 'uploaded',
+      detail: `${replaced ? 'Replaced existing file' : 'File uploaded'} (checksum ${checksum.slice(0, 12)}…). No result created.`,
+      fileId: id,
+    };
   }
 
   const existingResults = await findResultsByChecksum(checksum);
@@ -2029,7 +2186,7 @@ async function importOneFile(q, opts) {
   // an interrupted transfer leaves the result flagged "Incomplete".
   await tmUpdateResultProperties(resultId, { 'ATML Integrity': 'Complete' });
   for (const fid of linkFileIds) {
-    await updateFileMetadata(fid, { 'ATML Checksum': checksum, testResultId: resultId }).catch(() => {});
+    await updateFileMetadata(fid, { 'ATML Checksum': checksum, testResultId: resultId }).catch((e) => console.warn('[import] link testResultId failed for file', fid, e));
   }
 
   let state, detail;
@@ -2051,6 +2208,7 @@ async function runUpload() {
   const createResults = $('#opt-create-results').checked;
   const replace = $('#opt-replace-existing').checked;
   $('#upload-ok').disabled = true;
+  setImportControlsDisabled(true);
   const DONE_STATES = ['created', 'replaced', 'skipped', 'uploaded'];
   const opts = { workspaceId: wsId, createResults, replace };
 
@@ -2058,6 +2216,8 @@ async function runUpload() {
   const pending = uploadQueue.filter((q) => !DONE_STATES.includes(q.state));
   const POOL_SIZE = 5;
   let next = 0;
+  let done = 0;
+  setUploadProgress(0, pending.length);
   async function worker() {
     for (;;) {
       const q = pending[next++];
@@ -2076,21 +2236,31 @@ async function runUpload() {
         q.detail = e.message;
       }
       updateUploadRow(q);
+      setUploadProgress(++done, pending.length);
     }
   }
-  await Promise.all(
-    Array.from({ length: Math.min(POOL_SIZE, pending.length) }, worker),
-  );
-  updateUploadOkDisabled();
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(POOL_SIZE, pending.length) }, worker),
+    );
 
-  // Keep the drawer open so users can review each file's status.
-  // Refresh the search list so imported files appear there. The file-service
-  // search index lags a moment behind upload, so poll until they show up.
-  const importedIds = uploadQueue
-    .filter((q) => ['created', 'replaced', 'uploaded'].includes(q.state) && q.fileId)
-    .map((q) => q.fileId);
-  await refreshAfterImport(importedIds);
-  renderUploadRows();
+    // Keep the drawer open so users can review each file's status.
+    // Refresh the search list so imported files appear there. The file-service
+    // search index lags behind upload, so pause briefly, then poll until they show.
+    // Only wait on the last batch of uploads — for large imports (e.g. 1000
+    // files) the newest files head the created-desc list, so their presence is a
+    // sufficient signal the index has caught up without tracking every id.
+    const importedIds = uploadQueue
+      .filter((q) => ['created', 'replaced', 'uploaded'].includes(q.state) && q.fileId)
+      .map((q) => q.fileId);
+    const lastBatch = importedIds.slice(-POOL_SIZE);
+    await sleep(1500);
+    await refreshAfterImport(lastBatch);
+    renderUploadRows();
+  } finally {
+    setImportControlsDisabled(false);
+    updateUploadOkDisabled();
+  }
 }
 
 // Refresh the file list after an import, retrying briefly to let the
@@ -2112,16 +2282,18 @@ function wireUploadDrawer() {
   $('#upload-close').addEventListener('click', closeUploadDrawer);
   $('#upload-backdrop').addEventListener('click', closeUploadDrawer);
   $('#upload-ok').addEventListener('click', () => runUpload());
-  $('#upload-workspace').addEventListener('change', renderUploadRows);
+  $('#upload-workspace').addEventListener('change', resetQueueToReady);
+  $('#opt-create-results').addEventListener('change', resetQueueToReady);
+  $('#opt-replace-existing').addEventListener('change', resetQueueToReady);
 
   const input = $('#file-input');
   $('#dz-browse').addEventListener('click', () => input.click());
   input.addEventListener('change', () => { addUploadFiles(input.files); input.value = ''; });
 
   const dz = $('#dropzone');
-  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); if (!dz.classList.contains('disabled')) dz.classList.add('dragover'); }));
   ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); if (ev !== 'dragleave' || e.target === dz) dz.classList.remove('dragover'); }));
-  dz.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files) addUploadFiles(e.dataTransfer.files); });
+  dz.addEventListener('drop', (e) => { if (dz.classList.contains('disabled')) return; if (e.dataTransfer && e.dataTransfer.files) addUploadFiles(e.dataTransfer.files); });
 }
 
 function init() {
@@ -2148,6 +2320,21 @@ function init() {
     if (f) selectFile(f);
   });
 
+  // Track the highlighted row so the header's View-file button can open it.
+  fileTable.addEventListener('selection-change', (e) => {
+    const ids = (e.detail && e.detail.selectedRecordIds) || [];
+    state.selectedId = ids[0] || null;
+    updateHeaderButtons();
+  });
+  $('#nav-view-file').addEventListener('click', () => {
+    const id = state.selectedId;
+    if (!id) return;
+    const f = (state.files || []).find((x) => x.id === id)
+      || (state.allFiles || []).find((x) => x.id === id);
+    if (f) selectFile(f);
+  });
+  updateHeaderButtons();
+
   $('#view-rendered').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('rendered'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
   $('#view-raw').addEventListener('change', (e) => { if (suppressViewToggle) return; if (e.target.checked) setView('raw'); else { suppressViewToggle = true; e.target.checked = true; suppressViewToggle = false; } });
 
@@ -2159,6 +2346,8 @@ function init() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (timeControl) timeControl.close(); closeImageLightbox(); closeStepDetails(); closeUploadDrawer(); } });
 
   wireUploadDrawer();
+
+  loadPrivileges();
 
   fetchWorkspaces().then((list) => {
     const sorted = list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -2176,6 +2365,16 @@ function init() {
   });
 
   loadFiles();
+
+  // Periodically re-query the file table so newly added/removed files appear.
+  // Skips when off the search page, mid-load, drawer open, or the tab is hidden.
+  if (AUTO_REFRESH_MS > 0) {
+    setInterval(() => {
+      if (state.view !== 'search' || state.loading || document.hidden) return;
+      if ($('#upload-drawer').classList.contains('open')) return;
+      loadFiles();
+    }, AUTO_REFRESH_MS);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

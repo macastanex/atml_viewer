@@ -88,16 +88,22 @@ N/A
 - Viewing generic (non-ATML) XML in a readable rendered view and a raw-XML view.
 - A step-details slide-out showing per-step info, measurements (value/units/limits/comparator), inputs, and outputs; image attachments viewable in a lightbox.
 - Downloading the original file.
-- Importing ATML files: uploading to the File Service in a chosen workspace, optionally creating SystemLink Test Monitor results and steps from the parsed ATML, with de-duplication via an "ATML Checksum" property and an option to replace existing files/results.
+- Importing ATML files: uploading to the File Service in a chosen workspace, optionally creating SystemLink Test Monitor results and steps from the parsed ATML, with de-duplication via an "ATML Checksum" property and an option to replace existing files/results that have been previously imported.
 - Deep links from imported results into Test Insights result/step views.
+- Up to 1k bulk transfers of typical sized ATML files (<1GB). 5x concurrent upload, 10k step chunks
+- Auto-Refresh every 30 seconds
 
 ### Out of Scope
 
-- Authoring, editing, or exporting ATML files.
+- Authoring, editing, deleting, or exporting ATML files.
 - Support for non-ATML/XML file formats (e.g., binary, TDMS, PDF).
 - automated/scheduled ingestion pipelines or server-side background import.
-- Custom analytics, trending, or visualization aside from what native SystemLink/Test Insights provide once results are imported.
+- Custom analytics, trending, or visualization aside from what native Test Insights provide once results are imported.
 - Validation or normalization of ATML beyond what is needed to render and map results.
+- Large scale bulk transfers 1k+ files
+- Custom step types / non-standard ATML structures
+- Multi-GB ATML files
+
 
 ## 5. Security and Permissions
 

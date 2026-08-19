@@ -26,6 +26,13 @@
       </div>
     </div>
     <div class="header-actions">
+      <nimble-button id="nav-view-file" appearance="outline" title="View selected file" hidden>
+        <svg slot="start" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        View file
+      </nimble-button>
       <nimble-toggle-button id="nav-search" appearance="outline" checked title="Search files">
         <svg slot="start" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="11" cy="11" r="7"/>
@@ -152,6 +159,8 @@
         <nimble-checkbox id="opt-replace-existing">Replace existing files/results?</nimble-checkbox>
       </div>
 
+      <p id="upload-perm-msg" class="upload-perm-msg" hidden></p>
+
       <div id="dropzone" class="dropzone">
         <p class="dz-primary">Drag files here</p>
         <p class="dz-or">or</p>
@@ -168,6 +177,10 @@
       </table>
     </div>
     <footer class="drawer-footer upload-footer">
+      <div id="upload-progress" class="upload-progress" hidden>
+        <div class="upload-progress-track"><div id="upload-progress-fill" class="upload-progress-fill"></div></div>
+        <span id="upload-progress-text" class="upload-progress-text"></span>
+      </div>
       <nimble-button id="upload-close" appearance="ghost">Close</nimble-button>
       <nimble-button id="upload-ok" appearance="accent" disabled>Import</nimble-button>
     </footer>
