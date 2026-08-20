@@ -9,6 +9,7 @@ dist/
 manifest.json
 
 # Local temp / scratch
+test-data/
 *.log
 sample.xml
 motherboard.xml

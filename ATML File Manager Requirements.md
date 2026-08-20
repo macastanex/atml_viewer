@@ -89,9 +89,11 @@ N/A
 - A step-details slide-out showing per-step info, measurements (value/units/limits/comparator), inputs, and outputs; image attachments viewable in a lightbox.
 - Downloading the original file.
 - Importing ATML files: uploading to the File Service in a chosen workspace, optionally creating SystemLink Test Monitor results and steps from the parsed ATML, with de-duplication via an "ATML Checksum" property and an option to replace existing files/results that have been previously imported.
-- Deep links from imported results into Test Insights result/step views.
+- Deep links from imported results into Test Insights result/step views and the file service
 - Up to 1k bulk transfers of typical sized ATML files (<1GB). 5x concurrent upload, 10k step chunks
 - Auto-Refresh every 30 seconds
+- ATML files with <= 100k steps
+- Search for non-standard ATML file extnesions (.ATML and .XML are supported)
 
 ### Out of Scope
 
@@ -103,6 +105,7 @@ N/A
 - Large scale bulk transfers 1k+ files
 - Custom step types / non-standard ATML structures
 - Multi-GB ATML files
+- 100k+ Steps in ATML
 
 
 ## 5. Security and Permissions

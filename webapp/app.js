@@ -50,8 +50,9 @@ const el = (tag, opts = {}) => {
 
 /* ---------- API ---------- */
 // Fetch wrapper that retries on 429/503 with exponential backoff + jitter,
-// honoring a numeric Retry-After header when present.
-const RETRYABLE_STATUS = new Set([429, 503]);
+// honoring a numeric Retry-After header when present. 502/504 are transient
+// gateway errors (upstream slow/restarting) and are retried too.
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 async function fetchWithRetry(url, opts = {}, { retries = 6, baseDelay = 500 } = {}) {
   for (let attempt = 0; ; attempt++) {
     let res;
@@ -1798,11 +1799,38 @@ function buildUploadRow(q) {
   const tr = el('tr');
   tr.appendChild(el('td', { class: 'ul-name', text: q.file.name, attrs: { title: q.file.name } }));
   tr.appendChild(el('td', { class: 'ft-num', text: formatSize(q.file.size) }));
-  const stateTd = el('td', { class: 'ul-state ' + q.state, text: UL_STATE_LABEL[q.state] || q.state });
+  const stateTd = el('td', { class: 'ul-state ' + q.state, text: uploadStateText(q) });
   if (q.detail) stateTd.title = q.detail;
   tr.appendChild(stateTd);
   q._stateTd = stateTd;
+  const timeTd = el('td', { class: 'ft-num ul-time', text: uploadElapsedText(q) });
+  tr.appendChild(timeTd);
+  q._timeTd = timeTd;
   return tr;
+}
+
+// Import duration for a queued file: live while working, frozen once finished.
+function uploadElapsedMs(q) {
+  if (!q.startTime) return null;
+  return (q.endTime || Date.now()) - q.startTime;
+}
+function uploadElapsedText(q) {
+  const ms = uploadElapsedMs(q);
+  return ms == null ? '' : formatElapsedMs(ms);
+}
+function formatElapsedMs(ms) {
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s - m * 60);
+  return `${m}m ${String(rem).padStart(2, '0')}s`;
+}
+
+// State cell text: while working, show the live progress detail (e.g. step
+// upload count) instead of just "Working…".
+function uploadStateText(q) {
+  if (q.state === 'working' && q.detail) return q.detail;
+  return UL_STATE_LABEL[q.state] || q.state;
 }
 
 // Patch a single row's status cell in place (avoids rebuilding the whole table).
@@ -1810,8 +1838,9 @@ function updateUploadRow(q) {
   const td = q._stateTd;
   if (!td) return;
   td.className = 'ul-state ' + q.state;
-  td.textContent = UL_STATE_LABEL[q.state] || q.state;
+  td.textContent = uploadStateText(q);
   td.title = q.detail || '';
+  if (q._timeTd) q._timeTd.textContent = uploadElapsedText(q);
 }
 
 // Returns a message if the current import options exceed the caller's
@@ -1923,7 +1952,17 @@ async function tmPost(path, body, expectJson = true) {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Test Monitor request '${path}' failed (${res.status}).`);
+  if (!res.ok) {
+    // Surface the server's error message (Test Monitor returns body-size and
+    // other failures as a ValidationError payload, sometimes with a non-413 status).
+    const bodyText = await res.text().catch(() => '');
+    let detail = '';
+    try { const j = JSON.parse(bodyText); detail = (j && j.error && j.error.message) || j.message || ''; } catch { /* not JSON */ }
+    const err = new Error(`Test Monitor request '${path}' failed (${res.status})${detail ? ': ' + detail : ''}.`);
+    err.status = res.status;
+    err.detail = detail || bodyText;
+    throw err;
+  }
   if (!expectJson || res.status === 204) return {};
   return res.json().catch(() => ({}));
 }
@@ -1933,12 +1972,110 @@ async function tmCreateResult(resultRequest) {
   if (!r || !r.id) throw new Error('Failed to create test result.');
   return r.id;
 }
-const STEP_BATCH_SIZE = 10000;
-async function tmCreateSteps(steps) {
-  for (let i = 0; i < steps.length; i += STEP_BATCH_SIZE) {
-    const batch = steps.slice(i, i + STEP_BATCH_SIZE);
-    const isLast = i + STEP_BATCH_SIZE >= steps.length;
+// Server caps steps per request three ways: a count (requestMaximumBatchLimit,
+// 10k on demo), the request body size (~1MB; 413 / "Exceeded request body size
+// limit" if over), and processing time (504 gateway timeout on batches that take
+// too long to commit). Batches are packed to the largest that stays under the
+// measured body-size budget (and the count cap), so each POST is as few requests
+// as possible while never exceeding the limit. A 413 shrinks the budget and
+// splits as a safety net; 502/504 are retried by fetchWithRetry.
+const STEP_MAX_BATCH = 5000;
+const STEP_CONCURRENCY = 1; // per-result step ingestion is serialized server-side; concurrency doesn't help
+const STEP_BODY_LIMIT = 500_000; // server request-body cap (~500KB)
+// Effective budget leaves headroom under the limit for the JSON wrapper, header
+// overhead, and any multi-byte expansion. Shrinks further if a 413 still occurs.
+let stepBodyBudget = STEP_BODY_LIMIT - 50_000;
+// Bytes added around the steps array: {"steps":[...],"updateResultTotalTime":false}
+const STEP_BODY_WRAPPER = 48;
+const _bodyEncoder = new TextEncoder();
+// Actual UTF-8 byte length of a step's JSON (not char count — accounts for
+// multi-byte characters, which the ~1MB limit is measured in).
+function stepByteSize(step) {
+  return _bodyEncoder.encode(JSON.stringify(step)).length;
+}
+
+// Split a list of steps into batches whose serialized body stays under the byte
+// budget (and the count cap). Each step's true byte size plus its array-comma
+// and the fixed wrapper are summed so the assembled POST body never exceeds the
+// server limit.
+function chunkSteps(list) {
+  const out = [];
+  let i = 0;
+  while (i < list.length) {
+    let end = i;
+    let bytes = STEP_BODY_WRAPPER;
+    while (end < list.length && (end - i) < STEP_MAX_BATCH) {
+      const sz = stepByteSize(list[end]) + 1; // +1 for the comma between items
+      if (end > i && bytes + sz > stepBodyBudget) break;
+      bytes += sz;
+      end++;
+    }
+    if (end === i) end = i + 1; // always make progress, even on an oversized step
+    out.push(list.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+
+// POST one batch; if the server rejects it for body size (a 413 or a
+// ValidationError "Exceeded request body size limit") split it in half and
+// retry each so the budget self-corrects without failing the whole import.
+async function postStepBatch(batch, isLast) {
+  try {
     await tmPost('steps', { steps: batch, updateResultTotalTime: isLast });
+  } catch (err) {
+    const tooLarge = err && (err.status === 413 || /body size|too large|request entity/i.test(err.detail || err.message || ''));
+    if (tooLarge && batch.length > 1) {
+      stepBodyBudget = Math.max(200_000, Math.floor(stepBodyBudget / 2));
+      const mid = Math.ceil(batch.length / 2);
+      await postStepBatch(batch.slice(0, mid), false);
+      await postStepBatch(batch.slice(mid), isLast);
+      return;
+    }
+    throw err;
+  }
+}
+
+// Upload steps grouped by depth level: a level only starts once all earlier
+// levels (which contain its parents) are committed, so parent-before-child
+// ordering the API needs is preserved. Within a level the batches are
+// independent, so they upload with bounded concurrency for a big speedup.
+async function tmCreateSteps(steps, onProgress) {
+  const byId = new Map(steps.map((s) => [s.stepId, s]));
+  const depthCache = new Map();
+  const depthOf = (s) => {
+    let d = depthCache.get(s.stepId);
+    if (d != null) return d;
+    const parent = s.parentId != null ? byId.get(s.parentId) : null;
+    d = parent ? depthOf(parent) + 1 : 0;
+    depthCache.set(s.stepId, d);
+    return d;
+  };
+  const levels = new Map();
+  for (const s of steps) {
+    const d = depthOf(s);
+    if (!levels.has(d)) levels.set(d, []);
+    levels.get(d).push(s);
+  }
+  const levelKeys = [...levels.keys()].sort((a, b) => a - b);
+  const total = steps.length;
+  let uploaded = 0;
+
+  for (let li = 0; li < levelKeys.length; li++) {
+    const batches = chunkSteps(levels.get(levelKeys[li]));
+    const isLastLevel = li === levelKeys.length - 1;
+    let idx = 0;
+    async function worker() {
+      for (;;) {
+        const my = idx++;
+        if (my >= batches.length) return;
+        const isFinal = isLastLevel && my === batches.length - 1;
+        await postStepBatch(batches[my], isFinal);
+        uploaded += batches[my].length;
+        if (onProgress) onProgress(uploaded, total);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(STEP_CONCURRENCY, batches.length) }, worker));
   }
 }
 async function findResultsByChecksum(checksum) {
@@ -2181,7 +2318,12 @@ async function importOneFile(q, opts) {
   resultRequest.fileIds = linkFileIds;
   const resultId = await tmCreateResult(resultRequest);
   const steps = buildSteps(resultId);
-  if (steps.length) await tmCreateSteps(steps);
+  if (steps.length) {
+    await tmCreateSteps(steps, (uploaded, total) => {
+      q.detail = `Uploading steps ${uploaded.toLocaleString()} / ${total.toLocaleString()}…`;
+      updateUploadRow(q);
+    });
+  }
   // Mark integrity Complete only after every step batch has been uploaded, so
   // an interrupted transfer leaves the result flagged "Incomplete".
   await tmUpdateResultProperties(resultId, { 'ATML Integrity': 'Complete' });
@@ -2218,12 +2360,24 @@ async function runUpload() {
   let next = 0;
   let done = 0;
   setUploadProgress(0, pending.length);
+  const runStart = Date.now();
+  const setRunTime = () => { $('#upload-progress-time').textContent = formatElapsedMs(Date.now() - runStart); };
+  setRunTime();
+  // Tick the elapsed-time cells of in-flight files and the total run time.
+  const ticker = setInterval(() => {
+    setRunTime();
+    for (const q of pending) {
+      if (q.state === 'working' && q._timeTd) q._timeTd.textContent = uploadElapsedText(q);
+    }
+  }, 500);
   async function worker() {
     for (;;) {
       const q = pending[next++];
       if (!q) return;
       q.state = 'working';
       q.detail = '';
+      q.startTime = Date.now();
+      q.endTime = null;
       updateUploadRow(q);
       try {
         const r = await importOneFile(q, opts);
@@ -2235,6 +2389,7 @@ async function runUpload() {
         q.state = 'error';
         q.detail = e.message;
       }
+      q.endTime = Date.now();
       updateUploadRow(q);
       setUploadProgress(++done, pending.length);
     }
@@ -2243,6 +2398,7 @@ async function runUpload() {
     await Promise.all(
       Array.from({ length: Math.min(POOL_SIZE, pending.length) }, worker),
     );
+    setRunTime(); // freeze total import time (before the index-catchup wait)
 
     // Keep the drawer open so users can review each file's status.
     // Refresh the search list so imported files appear there. The file-service
@@ -2258,6 +2414,7 @@ async function runUpload() {
     await refreshAfterImport(lastBatch);
     renderUploadRows();
   } finally {
+    clearInterval(ticker);
     setImportControlsDisabled(false);
     updateUploadOkDisabled();
   }
