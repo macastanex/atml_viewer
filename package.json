@@ -12,6 +12,9 @@
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist/app',{recursive:true,force:true})\"",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js && npm run sbom",
+    "sbom": "node -e \"require('fs').mkdirSync('sbom',{recursive:true})\" && npm run sbom:cyclonedx && npm run sbom:spdx",
+    "sbom:cyclonedx": "npm sbom --sbom-format cyclonedx --sbom-type application > sbom/ATMLFileManager.cyclonedx.json",
+    "sbom:spdx": "npm sbom --sbom-format spdx --sbom-type application > sbom/ATMLFileManager.spdx.json"
   }
 }

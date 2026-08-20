@@ -1,0 +1,62 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:584d7308-9861-4041-aab0-c9dc058230b3",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-08-20T21:26:27.208Z",
+    "lifecycles": [
+      {
+        "phase": "build"
+      }
+    ],
+    "tools": [
+      {
+        "vendor": "npm",
+        "name": "cli",
+        "version": "11.11.0"
+      }
+    ],
+    "component": {
+      "bom-ref": "atml-file-manager@1.0.0",
+      "type": "application",
+      "name": "ATML File Manager",
+      "version": "1.0.0",
+      "scope": "required",
+      "author": "Mike Castaneda <mike.castaneda@emerson.com>",
+      "description": "Browse SystemLink files, render ATML (IEEE 1671/1636) test results in a readable summary and step tree, and import ATML files as native Test Monitor results.",
+      "purl": "pkg:npm/atml-file-manager@1.0.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:private",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/macastanex/atml_viewer.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/macastanex/atml_viewer"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    }
+  },
+  "components": [],
+  "dependencies": [
+    {
+      "ref": "atml-file-manager@1.0.0",
+      "dependsOn": []
+    }
+  ]
+}

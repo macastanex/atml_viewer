@@ -318,8 +318,9 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .st-status-cell { text-align: center; }
 .st-status { display: inline-flex; align-items: center; justify-content: center; }
 .st-status nimble-icon-check,
-.st-status nimble-icon-times,
 .st-status nimble-icon-exclamation-mark { width: 15px; height: 15px; }
+/* The times (X) glyph fills less of its viewBox, so size it up to match visually. */
+.st-status nimble-icon-times { width: 17px; height: 17px; }
 .st-status.done { color: var(--text); }
 .st-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); display: inline-block; }
 .st-time-cell { color: var(--text); font-family: var(--mono); font-size: 12px; white-space: nowrap; }

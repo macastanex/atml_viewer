@@ -1,0 +1,44 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "atml-file-manager@1.0.0",
+  "documentNamespace": "http://spdx.org/spdxdocs/atml-file-manager-1.0.0-ef0f69ad-46b8-4825-8184-e043f804c7fa",
+  "creationInfo": {
+    "created": "2026-08-20T21:26:28.601Z",
+    "creators": [
+      "Tool: npm/cli-11.11.0"
+    ]
+  },
+  "documentDescribes": [
+    "SPDXRef-Package-atml-file-manager-1.0.0"
+  ],
+  "packages": [
+    {
+      "name": "atml-file-manager",
+      "SPDXID": "SPDXRef-Package-atml-file-manager-1.0.0",
+      "versionInfo": "1.0.0",
+      "packageFileName": "",
+      "description": "Browse SystemLink files, render ATML (IEEE 1671/1636) test results in a readable summary and step tree, and import ATML files as native Test Monitor results.",
+      "primaryPackagePurpose": "APPLICATION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/macastanex/atml_viewer",
+      "licenseDeclared": "MIT",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/atml-file-manager@1.0.0"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relatedSpdxElement": "SPDXRef-Package-atml-file-manager-1.0.0",
+      "relationshipType": "DESCRIBES"
+    }
+  ]
+}
