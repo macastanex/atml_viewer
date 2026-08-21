@@ -10,6 +10,8 @@
 const FILE_API = '/nifile/v1';
 const SERVER_PAGE = 1000;   // files fetched per server request (API max)
 const AUTO_REFRESH_MS = 30000;   // file-table auto-refresh interval (ms); 0 disables
+// App version, kept in sync with package.json by scripts/build.js at build time.
+const APP_VERSION = '1.0.0';
 
 // SystemLink authorization action IDs used to gate write operations in the UI.
 const PERM = {
@@ -408,6 +410,10 @@ function openXml(text, name, id, file) {
   } else {
     state.currentFormat = 'xml';
     setFormatBadge('XML', false);
+    body.appendChild(el('div', {
+      class: 'viewer-banner warn',
+      text: 'This file is not in a recognized ATML (IEEE 1671/1636) test-results format. The raw XML structure is shown below, and importing it as a Test Monitor result is not supported.',
+    }));
     renderGenericXml(doc, body);
   }
   setView('rendered');
@@ -527,7 +533,7 @@ function renderAtml(doc, container) {
   const file = state.currentFile;
   if (file) {
     header.appendChild(el('div', { class: 'rh-group-title', text: 'File Details' }));
-    const ff = el('div', { class: 'rh-fields' });
+    const ff = el('div', { class: 'rh-fields', attrs: { id: 'rh-file-fields' } });
     addField(ff, 'Size', formatSize(file.size ?? file.size64));
     addField(ff, 'Created', formatDate(file.created) || '--');
     addField(ff, 'Updated', formatDate(file.updated) || '--');
@@ -541,7 +547,7 @@ function renderAtml(doc, container) {
     for (const k of Object.keys(props)) {
       if (k === 'Name') continue;
       if (k === 'testResultId' && props[k]) {
-        addFieldLink(ff, k, String(props[k]), `/testinsights/results/result/${encodeURIComponent(props[k])}/steps`);
+        addFieldLink(ff, k, String(props[k]), `/testinsights/results/result/${encodeURIComponent(props[k])}/steps`).dataset.field = 'testResultId';
         continue;
       }
       addField(ff, k, String(props[k]));
@@ -1348,6 +1354,7 @@ function addField(container, label, value) {
   item.appendChild(el('span', { class: 'rh-label', text: label }));
   item.appendChild(el('span', { class: 'rh-value', text: value }));
   container.appendChild(item);
+  return item;
 }
 function addFieldNode(container, label, valueNode) {
   const item = el('div', { class: 'rh-item' });
@@ -1356,6 +1363,7 @@ function addFieldNode(container, label, valueNode) {
   val.appendChild(valueNode);
   item.appendChild(val);
   container.appendChild(item);
+  return item;
 }
 function addFieldLink(container, label, text, href) {
   const link = el('a', {
@@ -1363,7 +1371,20 @@ function addFieldLink(container, label, text, href) {
     text,
     attrs: { href, target: '_blank', rel: 'noopener noreferrer' },
   });
-  addFieldNode(container, label, link);
+  return addFieldNode(container, label, link);
+}
+
+// After importing/replacing the currently-viewed file, refresh its testResultId
+// (in memory + the File Details link) so the viewer points at the new result.
+function updateViewerTestResultId(resultId) {
+  if (!state.currentFile) return;
+  state.currentFile.properties = state.currentFile.properties || {};
+  state.currentFile.properties.testResultId = resultId;
+  const ff = document.getElementById('rh-file-fields');
+  if (!ff) return;
+  const existing = ff.querySelector('[data-field="testResultId"]');
+  if (existing) existing.remove();
+  addFieldLink(ff, 'testResultId', String(resultId), `/testinsights/results/result/${encodeURIComponent(resultId)}/steps`).dataset.field = 'testResultId';
 }
 function addMeta(grid, label, value) {
   const item = el('div', { class: 'meta-item' });
@@ -1749,6 +1770,7 @@ function initTheme() {
 /* ---------- File upload slide-out ---------- */
 const uploadQueue = [];   // [{ file, state: 'ready'|'uploading'|'done'|'error', id, error }]
 const uploadKeys = new Set();   // name+size keys for O(1) de-duplication
+let importRunning = false;   // true while a run is in progress (locks remove buttons)
 
 function openUploadDrawer() {
   // Start each import session fresh — clear any previously listed files.
@@ -1763,6 +1785,20 @@ function openUploadDrawer() {
 function closeUploadDrawer() {
   $('#upload-drawer').classList.remove('open');
   $('#upload-backdrop').classList.remove('open');
+}
+
+// Open the import drawer. When an ATML file is currently being viewed, queue it
+// (reusing the File Service copy) so the user can import what they're looking at.
+function openImport() {
+  openUploadDrawer();
+  if (state.currentFormat === 'atml' && state.currentFile && state.currentRawText) {
+    const entry = addServiceFile(state.currentFile, state.currentRawText);
+    const wsSel = $('#upload-workspace');
+    if (entry.workspace && wsSel) wsSel.value = entry.workspace;
+    const createResults = $('#opt-create-results');
+    if (createResults) createResults.checked = true; // importing a viewed ATML implies creating results
+    updateUploadOkDisabled();
+  }
 }
 
 function isXmlFile(file) {
@@ -1790,6 +1826,27 @@ function addUploadFiles(fileList) {
   return added;
 }
 
+// Queue the currently-open File Service file for import. Unlike a local file its
+// content is already fetched (text) and it is reused (not re-uploaded); only a
+// result is created from it and linked back to the existing file.
+function addServiceFile(file, text) {
+  const key = `service:${file.id}`;
+  const entry = {
+    key,
+    serviceFileId: file.id,
+    text,
+    name: fileName(file),
+    size: file.size ?? file.size64,
+    workspace: file.workspace || '',
+    state: 'ready', detail: '', fileId: null, resultId: null,
+  };
+  const existing = uploadQueue.find((q) => q.key === key);
+  if (existing) Object.assign(existing, entry);
+  else { uploadKeys.add(key); uploadQueue.push(entry); }
+  renderUploadRows();
+  return entry;
+}
+
 const UL_STATE_LABEL = {
   ready: 'Ready', working: 'Working…', created: 'Created', replaced: 'Replaced',
   skipped: 'Skipped', uploaded: 'Uploaded', error: 'Error',
@@ -1797,8 +1854,10 @@ const UL_STATE_LABEL = {
 
 function buildUploadRow(q) {
   const tr = el('tr');
-  tr.appendChild(el('td', { class: 'ul-name', text: q.file.name, attrs: { title: q.file.name } }));
-  tr.appendChild(el('td', { class: 'ft-num', text: formatSize(q.file.size) }));
+  const name = q.name || (q.file && q.file.name) || '';
+  const size = q.size ?? (q.file && q.file.size);
+  tr.appendChild(el('td', { class: 'ul-name', text: name, attrs: { title: name } }));
+  tr.appendChild(el('td', { class: 'ft-num', text: formatSize(size) }));
   const stateTd = el('td', { class: 'ul-state ' + q.state, text: uploadStateText(q) });
   if (q.detail) stateTd.title = q.detail;
   tr.appendChild(stateTd);
@@ -1806,7 +1865,25 @@ function buildUploadRow(q) {
   const timeTd = el('td', { class: 'ft-num ul-time', text: uploadElapsedText(q) });
   tr.appendChild(timeTd);
   q._timeTd = timeTd;
+  const actionTd = el('td', { class: 'ul-actions' });
+  const removeBtn = el('button', { class: 'ul-remove', attrs: { type: 'button', title: 'Remove from list', 'aria-label': 'Remove from list' } });
+  removeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  removeBtn.disabled = importRunning;
+  removeBtn.addEventListener('click', () => removeQueueEntry(q));
+  actionTd.appendChild(removeBtn);
+  tr.appendChild(actionTd);
+  q._tr = tr;
   return tr;
+}
+
+// Remove a listed file from the queue before the run starts. No-op during a run.
+function removeQueueEntry(q) {
+  if (importRunning) return;
+  const i = uploadQueue.indexOf(q);
+  if (i >= 0) uploadQueue.splice(i, 1);
+  uploadKeys.delete(q.key);
+  if (q._tr) q._tr.remove();
+  updateUploadOkDisabled();
 }
 
 // Import duration for a queued file: live while working, frozen once finished.
@@ -1891,11 +1968,13 @@ function setUploadProgress(done, total) {
 
 // Lock the import options while a run is in progress so they can't change mid-run.
 function setImportControlsDisabled(disabled) {
+  importRunning = disabled;
   $('#upload-workspace').disabled = disabled;
   $('#opt-create-results').disabled = disabled;
   $('#opt-replace-existing').disabled = disabled;
   $('#dz-browse').disabled = disabled;
   $('#dropzone').classList.toggle('disabled', disabled);
+  document.querySelectorAll('#upload-rows .ul-remove').forEach((b) => { b.disabled = disabled; });
 }
 
 // Changing an import option invalidates prior results, so reset every listed
@@ -2197,7 +2276,7 @@ function buildResultAndSteps(doc, opts) {
     systemId: stationSerial || undefined,
     hostName: stationSerial || undefined,
     properties: { 'ATML Checksum': opts.checksum, 'ATML Integrity': 'Incomplete' },
-    keywords: ['ATML File Manager'],
+    keywords: ['ATML File Manager', `ATML File Manager v${APP_VERSION}`],
     serialNumber: serial || undefined,
     operator: operator || undefined,
     partNumber: partNumber || undefined,
@@ -2255,11 +2334,14 @@ function buildResultAndSteps(doc, opts) {
 
 // Import a single queued file. Returns { state, detail, fileId, resultId }.
 async function importOneFile(q, opts) {
-  const text = await q.file.text();
+  const isServiceFile = !!q.serviceFileId;
+  const text = q.text != null ? q.text : await q.file.text();
   const checksum = await sha256Hex(text);
   q.checksum = checksum;
 
-  if (!opts.createResults) {
+  // A file already in the service (the one being viewed) is always imported as a
+  // result — there is nothing to upload, so the upload-only path doesn't apply.
+  if (!opts.createResults && !isServiceFile) {
     // Dedup by checksum even when not creating results: a file already in the
     // service (orphan upload or one linked to a prior result) must not be
     // uploaded again unless the user opted to replace.
@@ -2300,7 +2382,9 @@ async function importOneFile(q, opts) {
   let replaced = false;
   if (hasExisting && opts.replace) {
     if (existingResults.length) await tmDeleteResults(existingResults.map((r) => r.id));
-    if (existingFileIds.length) await deleteFiles(existingFileIds);
+    // Never delete the file currently being viewed — it is the import source.
+    const idsToDelete = existingFileIds.filter((id) => id !== q.serviceFileId);
+    if (idsToDelete.length) await deleteFiles(idsToDelete);
     replaced = true;
   }
 
@@ -2308,13 +2392,14 @@ async function importOneFile(q, opts) {
   if (doc.querySelector('parsererror')) throw new Error('File is not valid XML.');
   if (!isAtml(doc)) throw new Error('File is not recognized as ATML.');
 
-  // Reuse a previously-uploaded file (has the checksum but no result) instead
-  // of uploading a duplicate; otherwise upload the file now.
-  const reusedFileId = (!replaced && !hasResult && existingFileIds.length) ? existingFileIds[0] : null;
-  const fileId = reusedFileId || await uploadFileToService(q.file, opts.workspaceId);
-  const linkFileIds = reusedFileId ? existingFileIds : [fileId];
+  // Service file: reuse its existing id (no upload). Otherwise reuse a
+  // previously-uploaded copy with the same checksum, or upload the file now.
+  const resultWsId = isServiceFile ? (q.workspace || opts.workspaceId) : opts.workspaceId;
+  const reusedFileId = (!isServiceFile && !replaced && !hasResult && existingFileIds.length) ? existingFileIds[0] : null;
+  const fileId = isServiceFile ? q.serviceFileId : (reusedFileId || await uploadFileToService(q.file, opts.workspaceId));
+  const linkFileIds = (isServiceFile || !reusedFileId) ? [fileId] : existingFileIds;
 
-  const { resultRequest, buildSteps } = buildResultAndSteps(doc, { checksum, workspaceId: opts.workspaceId, fileId });
+  const { resultRequest, buildSteps } = buildResultAndSteps(doc, { checksum, workspaceId: resultWsId, fileId });
   resultRequest.fileIds = linkFileIds;
   const resultId = await tmCreateResult(resultRequest);
   const steps = buildSteps(resultId);
@@ -2335,6 +2420,9 @@ async function importOneFile(q, opts) {
   if (replaced) {
     state = 'replaced';
     detail = `Replaced existing file/result. Created result ${resultId} with ${steps.length} step(s).`;
+  } else if (isServiceFile) {
+    state = 'created';
+    detail = `Created result ${resultId} with ${steps.length} step(s) from the viewed file.`;
   } else if (reusedFileId) {
     state = 'created';
     detail = `File was already uploaded — created result ${resultId} with ${steps.length} step(s) and linked it to the existing file.`;
@@ -2385,6 +2473,10 @@ async function runUpload() {
         q.detail = r.detail;
         q.fileId = r.fileId;
         q.resultId = r.resultId;
+        // If we imported the file currently open in the viewer, point it at the new result.
+        if (r.resultId && q.serviceFileId && state.currentFile && q.serviceFileId === state.currentFile.id) {
+          updateViewerTestResultId(r.resultId);
+        }
       } catch (e) {
         q.state = 'error';
         q.detail = e.message;
@@ -2435,7 +2527,7 @@ async function refreshAfterImport(importedIds) {
 }
 
 function wireUploadDrawer() {
-  $('#nav-import').addEventListener('click', openUploadDrawer);
+  $('#nav-import').addEventListener('click', openImport);
   $('#upload-close').addEventListener('click', closeUploadDrawer);
   $('#upload-backdrop').addEventListener('click', closeUploadDrawer);
   $('#upload-ok').addEventListener('click', () => runUpload());
@@ -2455,8 +2547,18 @@ function wireUploadDrawer() {
 
 function init() {
   initTheme();
-  $('#file-search').addEventListener('input', (e) => onSearchInput(e.target.value));
-  disableSuggestions($('#file-search'));
+  const searchField = $('#file-search');
+  const searchClear = $('#file-search-clear');
+  // Nimble's :host display beats the [hidden] attr, so toggle via style.display.
+  const updateSearchClear = () => { searchClear.style.display = searchField.value ? '' : 'none'; };
+  searchField.addEventListener('input', (e) => { onSearchInput(e.target.value); updateSearchClear(); });
+  searchClear.addEventListener('click', () => {
+    searchField.value = '';
+    onSearchInput('');
+    updateSearchClear();
+    searchField.focus();
+  });
+  disableSuggestions(searchField);
   $('#refresh-btn').addEventListener('click', () => loadFiles());
   $('#workspace-select').addEventListener('change', (e) => { state.workspace = e.target.value; loadFiles(); });
   wireDateFilter();

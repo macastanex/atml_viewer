@@ -60,6 +60,10 @@
         </nimble-select>
         <nimble-text-field id="file-search" class="search-input" placeholder="Search file names" autocomplete="off" spellcheck="false">
           <nimble-icon-magnifying-glass slot="start"></nimble-icon-magnifying-glass>
+          <nimble-button id="file-search-clear" slot="actions" appearance="ghost" content-hidden title="Clear search" aria-label="Clear search" style="display:none">
+            Clear
+            <nimble-icon-times slot="start"></nimble-icon-times>
+          </nimble-button>
         </nimble-text-field>
         <span id="date-range-mount" class="date-range-mount"></span>
         <button id="refresh-btn" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
@@ -171,7 +175,7 @@
 
       <table class="upload-list">
         <thead>
-          <tr><th>Name</th><th class="ft-num">Size</th><th>State</th><th class="ft-num">Time</th></tr>
+          <tr><th>Name</th><th class="ft-num">Size</th><th>State</th><th class="ft-num">Time</th><th class="ul-actions-col" aria-label="Actions"></th></tr>
         </thead>
         <tbody id="upload-rows"></tbody>
       </table>

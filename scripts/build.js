@@ -20,4 +20,11 @@ fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 fs.cpSync(srcDir, outDir, { recursive: true });
 
+// Sync the app version (used for the import keyword) with package.json.
+const pkg = require(path.join(root, 'package.json'));
+const appJsPath = path.join(outDir, 'app.js');
+const appJs = fs.readFileSync(appJsPath, 'utf8')
+  .replace(/const APP_VERSION = '[^']*';/, `const APP_VERSION = '${pkg.version}';`);
+fs.writeFileSync(appJsPath, appJs);
+
 console.log(`Built web app: ${path.relative(root, srcDir)} -> ${path.relative(root, outDir)}`);

@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "atml-file-manager@1.0.0",
-  "documentNamespace": "http://spdx.org/spdxdocs/atml-file-manager-1.0.0-ef0f69ad-46b8-4825-8184-e043f804c7fa",
+  "documentNamespace": "http://spdx.org/spdxdocs/atml-file-manager-1.0.0-5391b334-85b9-44c3-bdfa-67db28b125f5",
   "creationInfo": {
-    "created": "2026-08-20T21:26:28.601Z",
+    "created": "2026-08-21T21:47:42.181Z",
     "creators": [
       "Tool: npm/cli-11.11.0"
     ]

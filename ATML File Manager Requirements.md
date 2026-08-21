@@ -90,7 +90,7 @@ N/A
 - Downloading the original file.
 - Importing ATML files: uploading to the File Service in a chosen workspace, optionally creating SystemLink Test Monitor results and steps from the parsed ATML, with de-duplication via an "ATML Checksum" property and an option to replace existing files/results that have been previously imported.
 - Deep links from imported results into Test Insights result/step views and the file service
-- Up to 1k bulk transfers of typical sized ATML files (<1GB). 5x concurrent upload, 10k step chunks
+- Up to 1k bulk transfers of typical sized ATML files (<1GB). 5x concurrent upload, <1k step chunks
 - Auto-Refresh every 30 seconds
 - ATML files with <= 100k steps
 - Search for non-standard ATML file extnesions (.ATML and .XML are supported)

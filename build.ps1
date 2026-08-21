@@ -23,6 +23,10 @@ Write-Host "Building web app (npm run build)..."
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed (exit $LASTEXITCODE)." }
 
+Write-Host "Syntax-checking built app.js..."
+node --check dist/app/app.js
+if ($LASTEXITCODE -ne 0) { throw "dist/app/app.js has a syntax error — aborting before pack." }
+
 Write-Host "Packing (Plugin Manager) via '$Config' -> '$Output'..."
 slcli webapp pack --config $Config --output $Output
 
